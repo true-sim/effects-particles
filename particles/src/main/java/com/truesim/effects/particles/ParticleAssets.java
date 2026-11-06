@@ -3,16 +3,19 @@ package com.truesim.effects.particles;
 import com.truesim.annotations.AllowAllocation;
 import com.truesim.effects.particles.layout.ParticleConstants;
 import com.truesim.engine.render.GpuScene;
+import com.truesim.engine.render.TextureFormat;
+import com.truesim.engine.render.Textures;
 import com.truesim.engine.scene.SceneResources;
-import com.truesim.engine.vulkan.FrameSlots;
-import com.truesim.engine.vulkan.Retiring;
-import com.truesim.engine.vulkan.VulkanDevice;
 import com.truesim.scene.assets.AssetRef;
 import com.truesim.scene.effects.EffectAssets;
 import com.truesim.scene.effects.Forces;
 import com.truesim.scene.effects.VectorFieldData;
 import com.truesim.scene.render.MaterialData;
 import com.truesim.scene.render.RenderAssets;
+import java.lang.foreign.Arena;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.ValueLayout;
+import java.nio.ByteOrder;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,20 +26,18 @@ import org.slf4j.LoggerFactory;
  * The content effects name, through the scene's resources (core prerequisite 7.5): the textures, meshes and vector
  * fields renderers and modules name are held while an effect naming them is encoded, loaded through the asset cache
  * and found by ref where they are on the GPU. Without resources every texture draws as none (a round sprite) and mesh
- * renderers draw nothing. Vector fields ({@link EffectAssets#VECTOR_FIELD}) become 3D textures through the uploader
- * registered with the resources ({@link VectorField}). Used on the thread effects update on.
+ * renderers draw nothing. Vector fields ({@link EffectAssets#VECTOR_FIELD}) become 3D textures of half floats through
+ * the uploader registered with the resources ({@code Textures.volume}: uploaded within a frame, no queue waited for).
+ * Used on the thread effects update on.
  */
 final class ParticleAssets {
 
     private static final Logger LOG = LoggerFactory.getLogger(ParticleAssets.class);
 
-    private final VulkanDevice device;
-    private final Retiring retired;
     private SceneResources resources;
     private GpuScene scene; // whose materials mesh particles take, or null
     // The meshes mesh renderers name, by mesh and then material
     private final Map<AssetRef<?>, Map<AssetRef<?>, Mesh>> meshes = new HashMap<>();
-    private final Map<Integer, VectorField> fields = new HashMap<>();
 
     /** A mesh and the material mesh renderers draw it with: its pool mesh and block of material ids once there. */
     static final class Mesh {
@@ -54,9 +55,7 @@ final class ParticleAssets {
         }
     }
 
-    ParticleAssets(VulkanDevice device, FrameSlots slots) {
-        this.device = device;
-        this.retired = new Retiring(slots);
+    ParticleAssets() {
     }
 
     /**
@@ -70,23 +69,17 @@ final class ParticleAssets {
             return;
         }
         try {
+            Textures textures = resources.textures();
             resources.sampled(EffectAssets.VECTOR_FIELD, new SceneResources.SampledUploader<>() {
                 @Override
-                @AllowAllocation("a vector field arrived")
                 public int upload(VectorFieldData data) {
-                    VectorField field = VectorField.of(device, data.width(), data.height(), data.depth(),
-                        data.vectors());
-                    fields.put(field.slot(), field);
-                    return field.slot();
+                    return textures.volume(TextureFormat.RGBA16F, data.width(), data.height(), data.depth(),
+                        halves(data));
                 }
 
                 @Override
-                @AllowAllocation("a vector field let go of")
                 public void remove(int slot) {
-                    VectorField field = fields.remove(slot);
-                    if (field != null) {
-                        retired.add(field); // frames in flight sample it
-                    }
+                    textures.remove(slot); // freed once no frame in flight samples it
                 }
             });
         } catch (IllegalStateException e) {
@@ -218,22 +211,35 @@ final class ParticleAssets {
     }
 
     /**
-     * Frees the vector fields no frame reads any more, and writes the blocks of material ids whose materials came
-     * (mesh particles' materials drawn as the default until they load); once per frame.
+     * {@code field}'s vectors as RGBA half floats, little-endian, x fastest (a 3D texture's texels); alpha 0.
+     */
+    @AllowAllocation("a vector field arrived")
+    static MemorySegment halves(VectorFieldData field) {
+        float[] vectors = field.vectors();
+        int cells = field.cells();
+        MemorySegment texels = Arena.ofAuto().allocate(8L * cells);
+        for (int i = 0; i < cells; i++) {
+            for (int c = 0; c < 3; c++) {
+                texels.setAtIndex(HALF, 4L * i + c, Float.floatToFloat16(vectors[3 * i + c]));
+            }
+            texels.setAtIndex(HALF, 4L * i + 3, (short) 0);
+        }
+        return texels;
+    }
+
+    private static final ValueLayout.OfShort HALF = ValueLayout.JAVA_SHORT_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
+
+    /**
+     * Writes the blocks of material ids whose materials came (mesh particles' materials drawn as the default until they
+     * load) and the dynamic textures' changes; once per frame.
      */
     void collect() {
-        retired.release();
         if (resources != null) {
             resources.flush();
         }
     }
 
-    /** Frees what is left: after the GPU is idle. */
+    /** Nothing of its own to free: the resources hold the content. */
     void close() {
-        retired.close();
-        for (VectorField field : fields.values()) {
-            field.close();
-        }
-        fields.clear();
     }
 }

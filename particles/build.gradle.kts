@@ -9,10 +9,10 @@ description = "GPU particles for true-sim: scene-effects' effects simulated, sor
 
 dependencies {
     api("com.truesim.engine:engine-scene:0.187.0") // the renderer, the scene bridge and its resources
-    api("com.truesim.scene:scene-effects:0.67.0") // effects as data, their spawns and the Java reference
-    api("com.truesim.scene:scene-animation:0.67.0") // animation events and curves driving effects
+    api("com.truesim.scene:scene-effects:0.68.0") // effects as data, their spawns and the Java reference
+    api("com.truesim.scene:scene-animation:0.68.0") // animation events and curves driving effects
     testImplementation(testFixtures("com.truesim.engine:engine-render:0.187.0")) // the headless renderer
-    testImplementation("com.truesim.scene:scene-meshbuild:0.67.0")
+    testImplementation("com.truesim.scene:scene-meshbuild:0.68.0")
 }
 
 // The particle records and constants of src/main/slang (particles/particle.slang), as Java.

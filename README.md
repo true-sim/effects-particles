@@ -16,11 +16,11 @@ and uses only the core's generic hooks:
 
 | Module | Contents |
 |---|---|
-| `effects-particles` | `Particles` (the pool, programs and per-frame tables), `ParticleSimulation`, `ParticleDraw`, `ParticleCollisionDepth`, the particle modules' kernel (`[ParticleModule]` structs, `BuiltInModules`), `VectorField`; `scene`: `EffectSync`, `EffectsPlugin`, `EffectBindings` |
+| `effects-particles` | `Particles` (the pool, programs and per-frame tables), `ParticleSimulation`, `ParticleDraw`, `ParticleCollisionDepth`, the particle modules' kernel (`[ParticleModule]` structs, `BuiltInModules`); `scene`: `EffectSync`, `EffectsPlugin`, `EffectBindings` |
 
 ```kotlin
 dependencies {
-    implementation("com.truesim.effects:effects-particles:0.1.0") // with engine-scene 0.187 and scene-effects 0.67
+    implementation("com.truesim.effects:effects-particles:0.1.0") // with engine-scene 0.187 and scene-effects 0.68
 }
 ```
 
