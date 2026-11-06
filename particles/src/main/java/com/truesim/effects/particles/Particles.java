@@ -387,7 +387,7 @@ public final class Particles implements AutoCloseable {
         sortOf = new int[records];
         sortStaged = new Staging(4L * Math.min(maxEmitters, ParticleConstants.SORT_EMITTERS));
         ParticlePool p = null;
-        assets = new ParticleAssets(device, slots);
+        assets = new ParticleAssets();
         ModulePrograms m = null;
         CpuEmitters c = null;
         GpuBuffer[] made = new GpuBuffer[13];

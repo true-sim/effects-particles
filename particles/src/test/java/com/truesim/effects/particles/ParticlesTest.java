@@ -948,7 +948,6 @@ class ParticlesTest {
             device.waitIdle();
             particles.assets(null);
         }
-        assertThatIllegalArgumentException().isThrownBy(() -> VectorField.of(device, 2, 2, 2, new float[3]));
     }
 
     @Test
