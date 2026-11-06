@@ -1,3 +1,7 @@
+// The root project publishes nothing; a group of its own keeps it from clashing with the module of the same name
+// (com.truesim.effects:effects-particles) when this build is included in another's composite.
+group = "com.truesim.effects.build"
+
 // Test shards (CI): -Ptruesim.shard=i/n -Ptruesim.shardModules=effects-particles runs shard i of n of those
 // modules' tests, the shards balanced by ci/test-timings.txt (seconds per test class, per test method for the long
 // classes, as CI measured them): the longest first, each to a shard already running its package while that stays
