@@ -228,14 +228,18 @@ float3 particleLight(LightListHeader* h, IndirectLight* indirect, HookSite site,
     return sum * 0.31830988; // over pi
 }
 
-/** The pixel and view depth of `p`, relative to the camera, in `view`: where its light clusters are looked up. */
-void pixelOf(View* view, float3 p, out uint2 pixel, out float depth)
+/**
+ * The pixel and view depth of `p`, relative to the camera, in `view` of `size` pixels (the record's `pixels`, which the
+ * light clusters are binned over): where its light clusters and shadows are looked up. The depth is the clip w, the
+ * distance along the view direction, as the surfaces take it (never a fragment's SV_Position.w, which is 1 / w); the
+ * size is the record's, as the View's outputSize is 0 unless something sets it (pitfalls: docs/pitfalls.md).
+ */
+void pixelOf(View* view, float3 p, uint2 size, out uint2 pixel, out float depth)
 {
     float4 clip = mul(view.viewProjection, float4(p, 1));
     depth = clip.w;
     float2 ndc = clip.xy / max(abs(clip.w), 1e-6);
-    uint2 size = view.outputSize;
-    pixel = uint2(clamp((ndc * 0.5 + 0.5) * float2(size), 0.0, float2(size) - 1));
+    pixel = uint2(clamp((ndc * 0.5 + 0.5) * float2(size), 0.0, float2(max(size, 1u) - 1)));
 }
 
 [shader("compute")]
@@ -264,7 +268,7 @@ void lightMain(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID)
     float3 center = relativeTo(e, p.position, view.position, view.positionLow);
     uint2 pixel;
     float depth;
-    pixelOf(view, center, pixel, depth);
+    pixelOf(view, center, d.pixels, pixel, depth);
     float3 toCamera = normalize(push.facing - center);
     float3 lit = particleLight((LightListHeader*) d.lights, (IndirectLight*) d.indirect,
         hookSite(view, pixel, d.hookEntry), center, toCamera, 0, 0, 0, 0, 0, pixel, depth);
@@ -626,6 +630,13 @@ LightListHeader* lightsOf(ParticleVertex v)
     return (LightListHeader*) draws[push.first].lights; // the same for every draw of the view
 }
 
+/** The view's pixels its light clusters are binned over, as fragment `v`'s draw names them. */
+uint2 pixelsOf(ParticleVertex v)
+{
+    ParticleDrawRecord* draws = push.draws;
+    return draws[push.first].pixels; // the same for every draw of the view
+}
+
 IndirectLight* indirectOf(ParticleVertex v)
 {
     ParticleDrawRecord* draws = push.draws;
@@ -696,8 +707,11 @@ float4 shade(ParticleVertex v)
     }
     else if (lighting == LIGHTING_PIXEL || lighting == LIGHTING_SIX_WAY)
     {
-        uint2 pixel = uint2(v.position.xy);
-        float depth = v.position.w;
+        // Where it projects in the view's pixels (those the clusters are binned over, whatever the target: the half
+        // resolution's too) and its view depth: clip w, not v.position.w (1 / w in a fragment shader)
+        uint2 pixel;
+        float depth;
+        pixelOf(view, v.world, pixelsOf(v), pixel, depth);
         float3 n = v.forward;
         if (lighting == LIGHTING_PIXEL)
         {
