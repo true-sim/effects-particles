@@ -135,6 +135,7 @@ struct ParticleVertex
     nointerpolation float3 right : TEXCOORD6; // billboards' frame: right, up, and towards the camera
     nointerpolation float3 up : TEXCOORD7;
     nointerpolation float3 forward : TEXCOORD8;
+    nointerpolation uint hookEntry : TEXCOORD9; // its emitter's shading hook override entry (0: the view's values)
 };
 
 /** The record of draw `index` of the multi-draw recorded. */
@@ -165,6 +166,7 @@ ParticleVertex nothing()
     o.right = 0;
     o.up = 0;
     o.forward = 0;
+    o.hookEntry = 0;
     return o;
 }
 
@@ -184,10 +186,12 @@ float sixWay(float3 l, float4 a, float4 b)
  * The light a particle reflects at `world` (relative to the camera; at `pixel`, `depth` from the viewer): every light
  * of the view's list there after its shadow (the sun without a list), and the sky, as `mode` weighs them: 0 the same
  * from every side (a point lit per vertex), 1 by `normal` wrapped around (lit per pixel), 2 by six-way maps `a` and
- * `b` in the frame (`right`, `up`, `normal` towards the camera). Diffuse, over pi.
+ * `b` in the frame (`right`, `up`, `normal` towards the camera). Diffuse, over pi. The light from all around is the
+ * view's indirect hooks' (the probe volume) where they give it (`site`: the view's hook block, the emitter's override
+ * entry), the environment's elsewhere.
  */
-float3 particleLight(LightListHeader* h, IndirectLight* indirect, float3 world, float3 normal, float3 right,
-    float3 up, uint mode, float4 a, float4 b, uint2 pixel, float depth)
+float3 particleLight(LightListHeader* h, IndirectLight* indirect, HookSite site, float3 world, float3 normal,
+    float3 right, float3 up, uint mode, float4 a, float4 b, uint2 pixel, float depth)
 {
     float sky = mode == 2 ? (a.r + a.g + a.b + b.r + b.g + b.b) / 6 : 1;
     // The light from all around: the view's indirect light (the environment, or the probe volume where it reaches),
@@ -195,7 +199,8 @@ float3 particleLight(LightListHeader* h, IndirectLight* indirect, float3 world, 
     float3 sum = SKY_IRRADIANCE * sky;
     if (indirect != nullptr)
     {
-        sum = 3.14159265 * diffuseLightAt(indirect, normal, world, normal) * sky;
+        AroundLight hooked = aroundLight(site, world, normal, normal, normal, around(normal, 1, AROUND_DIFFUSE));
+        sum = 3.14159265 * aroundDiffuse(indirect, hooked, normal) * sky;
     }
     if (h == nullptr)
     {
@@ -261,8 +266,8 @@ void lightMain(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID)
     float depth;
     pixelOf(view, center, pixel, depth);
     float3 toCamera = normalize(push.facing - center);
-    float3 lit = particleLight((LightListHeader*) d.lights, (IndirectLight*) d.indirect, center, toCamera, 0, 0, 0, 0,
-        0, pixel, depth);
+    float3 lit = particleLight((LightListHeader*) d.lights, (IndirectLight*) d.indirect,
+        hookSite(view, pixel, d.hookEntry), center, toCamera, 0, 0, 0, 0, 0, pixel, depth);
     uint* commands = push.commands;
     uint at = LIT_WORDS + 4 * (e.first + k);
     commands[at] = asuint(lit.x);
@@ -368,6 +373,7 @@ ParticleVertex billboardMain(uint vertex : SV_VertexID, uint instance : SV_Insta
     float blend = (r.flags & DRAW_BLEND_FRAMES) != 0 ? t - floor(t) : 0;
     o.frames = uint4(f0, f1, uint(blend * 65535), RENDER_BILLBOARD);
     o.draw = uint4(d.renderer, d.texture, d.extra, d.lighting);
+    o.hookEntry = d.hookEntry;
     o.world = world;
     o.right = right;
     o.up = up;
@@ -415,11 +421,13 @@ ParticleVertex segment(StripPoint before, StripPoint a, StripPoint b, StripPoint
     o.sphere = float3(o.position.w, 0.5 * p.width, o.position.w);
     o.frames = uint4(0, 0, 0, kind);
     o.draw = uint4(d.renderer, d.texture, NO_TEXTURE, LIGHTING_UNLIT);
+    o.hookEntry = d.hookEntry;
     o.world = world;
     o.lit = 1;
     o.right = 0;
     o.up = 0;
     o.forward = 0;
+    o.hookEntry = 0;
     return o;
 }
 
@@ -679,6 +687,8 @@ float4 shade(ParticleVertex v)
         }
     }
     float4 color = v.color * texel;
+    View* view = push.view;
+    HookSite site = hookSite(view, uint2(v.position.xy), v.hookEntry);
     uint lighting = v.draw.w;
     if (lighting == LIGHTING_VERTEX)
     {
@@ -699,7 +709,8 @@ float4 shade(ParticleVertex v)
                 m = frame(r, v.draw.z, v.frames.x, v.uv).xyz * 2 - 1;
             }
             n = normalize(v.right * m.x + v.up * m.y + v.forward * m.z);
-            color.rgb *= particleLight(lightsOf(v), indirectOf(v), v.world, n, v.right, v.up, 1, 0, 0, pixel, depth);
+            color.rgb *= particleLight(lightsOf(v), indirectOf(v), site, v.world, n, v.right, v.up, 1, 0, 0, pixel,
+                depth);
         }
         else
         {
@@ -710,13 +721,11 @@ float4 shade(ParticleVertex v)
                 b = frame(r, v.draw.z, v.frames.x, v.uv);
             }
             float4 a = texel;
-            color = float4(v.color.rgb * (particleLight(lightsOf(v), indirectOf(v), v.world, n, v.right, v.up, 2, a, b, pixel, depth)
-                + b.a),
-                v.color.a * a.a);
+            color = float4(v.color.rgb * (particleLight(lightsOf(v), indirectOf(v), site, v.world, n, v.right, v.up, 2,
+                a, b, pixel, depth) + b.a), v.color.a * a.a);
         }
     }
     // The opaque scene's distance here: reverse depth with an infinite far plane, depth = near / distance.
-    View* view = push.view;
     float near = mul(view.viewProjection, float4(0, 0, 0, 1)).z;
     float depth = textures[push.depth].Load(int3(int2(v.position.xy), 0)).r;
     float scene = depth > 0 ? near / depth : 1e30;
@@ -752,5 +761,28 @@ float4 shade(ParticleVertex v)
             color.a *= saturate((scene - distance) / r.soft);
         }
     }
-    return float4(color.rgb * color.a, color.a * (1 - r.alphaToAdd));
+    float covers = color.a * (1 - r.alphaToAdd);
+    float3 own = color.rgb * color.a;
+    if (anyShadingHooks())
+    {
+        // The view's media hooks between the particle and the camera (fog): its own light through them (T), and the
+        // light they add in front of it (L) where it covers what is behind, which came through them already
+        ViewRay ray = alongViewRay(site, float3(0), v.world, v.forward);
+        if (any(ray.transmittance != 1) || any(ray.radiance != 0)) // none ran: exactly as without hooks
+        {
+            own = own * ray.transmittance + ray.radiance * covers;
+        }
+    }
+    return float4(own, covers);
+}
+
+/**
+ * Where a particle at `pixel` of the view `view` is shaded, for the view's shading hooks: its block, a rasterized
+ * pixel, its emitter's override entry `entry` (its node's, engine-scene's ShadingHookOverrideSync).
+ */
+HookSite hookSite(View* view, uint2 pixel, uint entry)
+{
+    HookSite site = HookSite.at(view.hooks, pixel, SHADING_RASTER);
+    site.entry = entry;
+    return site;
 }

@@ -26,12 +26,14 @@ import com.truesim.engine.graph.Technique;
 import com.truesim.engine.render.Camera;
 import com.truesim.engine.render.Keys;
 import com.truesim.engine.render.SceneView;
+import com.truesim.engine.render.ShadingHookInputs;
 import com.truesim.engine.render.ShadowInputs;
 import com.truesim.engine.render.Transparency;
 import com.truesim.engine.render.layout.PyramidPush;
 import com.truesim.engine.vulkan.Format;
 import com.truesim.engine.vulkan.FrameBuffer;
 import com.truesim.engine.vulkan.Pipeline;
+import com.truesim.engine.vulkan.Specialization;
 import java.util.List;
 import java.util.Objects;
 
@@ -190,11 +192,14 @@ public final class ParticleDraw implements Technique {
         Buffer commands = g.createBuffer(name, 16L * MAX_DRAWS + 16L * particles.pool().slots());
         Buffer lights = g.optional(Keys.LIGHT_LIST);
         ShadowInputs.Set shadows = lights == null ? null : g.request(new ShadowInputs(g.view()));
-        // The view's indirect light (an environment, the probe volume): the light from all around lit particles take
+        // The view's indirect light (an environment) and its shading hooks (the probe volume's light from all around,
+        // the media between a particle and the camera: fog), as the view's surfaces take them
         com.truesim.engine.render.IndirectInputs.Set indirect = com.truesim.engine.render.IndirectInputs.of(g);
-        Pipeline cull = g.computeProgram("shaders/particles/draw.spv", "cullMain", ParticleDrawPush.BYTES);
+        ShadingHookInputs.Set hooks = ShadingHookInputs.of(g, view.view());
+        Specialization constants = hooks.specialization();
+        Pipeline cull = g.computeProgram("shaders/particles/draw.spv", "cullMain", ParticleDrawPush.BYTES, constants);
         Pipeline[] pipelines = pipelines(color.format().vk(), overdraw ? Particles.DRAW_OVERDRAW
-            : Particles.DRAW_COLOR);
+            : Particles.DRAW_COLOR, constants);
         Draws list = draws;
         com.truesim.engine.render.RenderView renderView = view.view();
         boolean paired = center != null;
@@ -217,10 +222,11 @@ public final class ParticleDraw implements Technique {
                         .commands(ctx.address(commands)).drawCount(n), (n + 63) / 64);
                 }
             });
-        Pipeline light = g.computeProgram("shaders/particles/draw.spv", "lightMain", ParticleDrawPush.BYTES);
+        Pipeline light = g.computeProgram("shaders/particles/draw.spv", "lightMain", ParticleDrawPush.BYTES, constants);
         ParticleDrawPush lightPush = new ParticleDrawPush();
         GraphBuilder.PassBuilder lighting = g.pass("particle lighting" + suffix).read(pool, BufferAccess.STORAGE_READ)
             .read(state, BufferAccess.STORAGE_READ).write(commands, BufferAccess.STORAGE_WRITE);
+        hooks.readBy(lighting, Access.SAMPLED_COMPUTE, BufferAccess.STORAGE_READ);
         if (indirect != null) {
             indirect.readBy(lighting, Access.SAMPLED_COMPUTE, BufferAccess.STORAGE_READ);
         }
@@ -241,11 +247,12 @@ public final class ParticleDraw implements Technique {
             }
         });
         if (!before && particles.drawsHalf()) {
-            half(g, color, depth, pool, side, order, sorted, commands, lights, shadows, indirect, camera, sortCenter,
-                paired);
+            half(g, color, depth, pool, side, order, sorted, commands, lights, shadows, indirect, hooks, camera,
+                sortCenter, paired);
         }
         ParticleDrawPush drawPush = new ParticleDrawPush();
         GraphBuilder.PassBuilder drawPass = g.pass("particle draw" + suffix);
+        hooks.readBy(drawPass, Access.SAMPLED_FRAGMENT, BufferAccess.DRAW_READ);
         if (indirect != null) {
             indirect.readBy(drawPass, Access.SAMPLED_FRAGMENT, BufferAccess.DRAW_READ);
         }
@@ -279,16 +286,20 @@ public final class ParticleDraw implements Technique {
                 drawRuns(ctx, list, pipelines, drawPush, commands, list.start(SPLIT), n);
             });
         if (!before) {
-            reactive(g, color, depth, pool, side, order, sorted, commands, camera, sortCenter, paired);
+            reactive(g, color, depth, pool, side, order, sorted, commands, hooks, camera, sortCenter, paired);
         }
         g.provide(Keys.SCENE_COLOR, color);
     }
 
-    /** The pipelines of each renderer kind (none for meshes) into {@code format}, or for the reactive mask. */
-    private Pipeline[] pipelines(int format, int mode) {
+    /**
+     * The pipelines of each renderer kind (none for meshes) into {@code format}, or for the reactive mask, running the
+     * view's shading hooks ({@code constants}).
+     */
+    private Pipeline[] pipelines(int format, int mode, Specialization constants) {
         Pipeline[] pipelines = new Pipeline[ParticleConstants.RENDER_BEAM + 1];
         for (int kind = 0; kind < pipelines.length; kind++) {
-            pipelines[kind] = kind == ParticleConstants.RENDER_MESH ? null : particles.pipeline(kind, format, mode);
+            pipelines[kind] = kind == ParticleConstants.RENDER_MESH ? null
+                : particles.pipeline(kind, format, mode, constants);
         }
         return pipelines;
     }
@@ -301,7 +312,7 @@ public final class ParticleDraw implements Technique {
     @AllowAllocation("building the graph, when it changes")
     private void half(GraphBuilder g, Image color, Image depth, Buffer pool, Buffer side, Buffer order,
         ParticleSort.Order sorted, Buffer commands, Buffer lights, ShadowInputs.Set shadows,
-        com.truesim.engine.render.IndirectInputs.Set indirect, Camera camera,
+        com.truesim.engine.render.IndirectInputs.Set indirect, ShadingHookInputs.Set hooks, Camera camera,
         Camera sortCenter, boolean paired) {
         int width = (color.width() + 1) / 2;
         int height = (color.height() + 1) / 2;
@@ -319,10 +330,11 @@ public final class ParticleDraw implements Technique {
                 }
             });
         Pipeline[] pipelines = pipelines(color.format().vk(), overdraw ? Particles.DRAW_OVERDRAW
-            : Particles.DRAW_COLOR);
+            : Particles.DRAW_COLOR, hooks.specialization());
         com.truesim.engine.render.RenderView renderView = view.view();
         ParticleDrawPush drawPush = new ParticleDrawPush();
         GraphBuilder.PassBuilder drawPass = g.pass("particle draw, half");
+        hooks.readBy(drawPass, Access.SAMPLED_FRAGMENT, BufferAccess.DRAW_READ);
         if (indirect != null) {
             indirect.readBy(drawPass, Access.SAMPLED_FRAGMENT, BufferAccess.DRAW_READ);
         }
@@ -362,13 +374,15 @@ public final class ParticleDraw implements Technique {
     /** The reactive mask: every draw after the glass again, their coverage added into an R8 image, cleared. */
     @AllowAllocation("building the graph, when it changes")
     private void reactive(GraphBuilder g, Image color, Image depth, Buffer pool, Buffer side, Buffer order,
-        ParticleSort.Order sorted, Buffer commands, Camera camera, Camera sortCenter, boolean paired) {
+        ParticleSort.Order sorted, Buffer commands, ShadingHookInputs.Set hooks, Camera camera, Camera sortCenter,
+        boolean paired) {
         Image mask = g.create("particle reactive mask", ImageDesc.of(Format.R8_UNORM, color.width(), color.height()));
-        Pipeline[] pipelines = pipelines(Format.R8_UNORM.vk(), Particles.DRAW_REACTIVE);
+        Pipeline[] pipelines = pipelines(Format.R8_UNORM.vk(), Particles.DRAW_REACTIVE, hooks.specialization());
         com.truesim.engine.render.RenderView renderView = view.view();
         Draws list = draws;
         ParticleDrawPush push = new ParticleDrawPush();
-        g.pass("particle reactive mask").read(pool, BufferAccess.DRAW_READ).read(side, BufferAccess.DRAW_READ)
+        hooks.readBy(g.pass("particle reactive mask"), Access.SAMPLED_FRAGMENT, BufferAccess.DRAW_READ)
+            .read(pool, BufferAccess.DRAW_READ).read(side, BufferAccess.DRAW_READ)
             .read(order, BufferAccess.DRAW_READ).read(sorted.sorted(), BufferAccess.DRAW_READ)
             .read(sorted.args(), BufferAccess.DRAW_READ).read(commands, BufferAccess.INDIRECT)
             .read(commands, BufferAccess.DRAW_READ).read(depth, Access.SAMPLED_FRAGMENT)
@@ -520,6 +534,7 @@ public final class ParticleDraw implements Technique {
                 staged.putInt(at + ParticleDrawRecordLayout.EXTRA, particles.rendererExtra(e, index[o]));
                 staged.putLong(at + ParticleDrawRecordLayout.LIGHTS, lights);
                 staged.putLong(at + ParticleDrawRecordLayout.INDIRECT, indirect);
+                staged.putInt(at + ParticleDrawRecordLayout.HOOK_ENTRY, particles.listHookEntry(e));
                 lit += lighting != ParticleConstants.LIGHTING_UNLIT ? 1 : 0;
                 if (lighting == ParticleConstants.LIGHTING_VERTEX) {
                     vertexLit++;

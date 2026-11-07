@@ -228,6 +228,20 @@ public final class EffectSync {
         return jointChains;
     }
 
+    /**
+     * Gives each effect's particles the shading hook override entry of its node ({@code overrides}' entryOf: the
+     * nearest node at or above it overriding a hook), as the node's renderables have theirs: a node turning the fog
+     * off turns it off for the effects under it. Null: none.
+     */
+    @com.truesim.annotations.AllowAllocation("set once")
+    public EffectSync hookOverrides(com.truesim.engine.scene.ShadingHookOverrideSync overrides) {
+        particles.hookEntries(overrides == null ? null : effect -> {
+            long node = effects.node(effect);
+            return node == NodeHandle.NONE ? 0 : overrides.entryOf(node);
+        });
+        return this;
+    }
+
     /** Names what emitter {@code emitter} of {@code effect} emits from this frame: its node's mesh, its joints. */
     private void emit(long effect, int emitter) {
         List<Module> init = effects.data(effect).emitters().get(emitter).init();
