@@ -201,6 +201,9 @@ Sibling checkouts of `build-logic`, `common-*`, `scene` and `engine` are used as
 are used. The GPU tests run validated on any Vulkan 1.3 device (CI: Mesa's lavapipe, in test shards balanced by
 `ci/test-timings.txt`); the benchmarks run with `TRUESIM_BENCHMARK=true`.
 
+Before changing the shaders, read [docs/pitfalls.md](docs/pitfalls.md) (and the engine's): mistakes made here once,
+with their evidence and the rule that follows.
+
 ## Licence
 
 MIT, see [LICENSE](LICENSE).

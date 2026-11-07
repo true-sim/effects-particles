@@ -13,6 +13,7 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
+import com.truesim.common.math.color.Color;
 import com.truesim.common.state.ChangeClock;
 import com.truesim.effects.particles.layout.ParticleConstants;
 import com.truesim.engine.graph.Access;
@@ -37,6 +38,9 @@ import com.truesim.engine.render.SceneGeometry;
 import com.truesim.engine.render.SceneView;
 import com.truesim.engine.render.Textures;
 import com.truesim.engine.render.ViewOptions;
+import com.truesim.engine.render.materials.MetallicRoughnessParameters;
+import com.truesim.engine.render.shadows.Shadows;
+import com.truesim.engine.render.testing.TestMeshes;
 import com.truesim.engine.vulkan.Format;
 import com.truesim.engine.vulkan.GpuBuffer;
 import com.truesim.engine.vulkan.GpuImage;
@@ -47,6 +51,7 @@ import com.truesim.scene.assets.AssetId;
 import com.truesim.scene.assets.AssetRef;
 import com.truesim.scene.assets.AssetType;
 import com.truesim.scene.core.SceneGraph;
+import com.truesim.scene.core.ShadowSpec;
 import com.truesim.scene.effects.Bind;
 import com.truesim.scene.effects.EffectData;
 import com.truesim.scene.effects.EffectRuntime;
@@ -90,6 +95,7 @@ class LitParticlesTest {
     private GpuImage target;
     private GpuBuffer pixels;
     private SceneView view;
+    private Shadows shadows;
     private final SceneGraph nodes = new SceneGraph(new ChangeClock());
     private final Effects effects = new Effects(nodes);
     private final EffectRuntime runtime = new EffectRuntime(effects);
@@ -109,6 +115,11 @@ class LitParticlesTest {
 
     /** The graph, with a light list (one point light at {@code lx}, 0, -4) or without one (the sun). */
     private void graph(boolean lit, double lx) {
+        graph(lit, lx, Math.PI / 2);
+    }
+
+    /** The same through a camera with a vertical field of view of {@code fovY}. */
+    private void graph(boolean lit, double lx, double fovY) {
         graph = new FrameGraph(device, 2);
         pool = new GeometryPool(device, GeometryPool.Capacity.of(64, 4, 4), graph.frameSlots());
         scene = new GpuScene(device, pool, 4, graph.frameSlots());
@@ -126,7 +137,7 @@ class LitParticlesTest {
             | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         target = new GpuImage(device, SIZE, SIZE, VK_FORMAT_R8G8B8A8_UNORM, usage, VK_IMAGE_ASPECT_COLOR_BIT);
         pixels = GpuBuffer.hostVisible(device, 4L * SIZE * SIZE, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-        Camera camera = new Camera().set(0, 0, -1, 0, 1, 0, Math.PI / 2, SIZE, SIZE, 0.1);
+        Camera camera = new Camera().set(0, 0, -1, 0, 1, 0, fovY, SIZE, SIZE, 0.1);
         SceneGeometry geometry = SceneGeometry.meshlets(renderer);
         ViewPort port = graph.addView("main").size(SIZE, SIZE);
         view = geometry.createView(port, camera, ViewOptions.of(256, 1 << 12));
@@ -147,6 +158,9 @@ class LitParticlesTest {
             int errors = instance.validationErrors();
             if (graph != null) {
                 graph.close();
+                if (shadows != null) {
+                    shadows.close();
+                }
                 particles.close();
                 content.close();
                 lights.close();
@@ -327,5 +341,116 @@ class LitParticlesTest {
         puffs(1, 0, 3, Renderer.billboard(Renderer.Facing.POSITION).lighting(Renderer.Lighting.PER_PIXEL));
         int[] image = frames(3);
         assertThat(red(image, 0, SIZE)).isGreaterThan(5);
+    }
+
+    /**
+     * The graph for clouds 20 m ahead, past the light clusters' first slices (the first ends 0.15 m out), seen through
+     * a narrow view (8 pixels a meter there) in cluster tiles of 8 pixels, so which cluster a particle looks its lights
+     * up in matters; the light list's one light, out of reach at (100, 0, -4), set by the test.
+     */
+    private void farGraph() {
+        graph(true, 100, Math.PI / 8);
+        graph.settings().set(ClusteredLights.TILE_SIZE, 8);
+    }
+
+    /** Three white puffs in a row at ({@code x} - 0.6 to {@code x} + 0.6, {@code y}, -20), drawn by {@code drawn}. */
+    private void farCloud(double x, double y, Renderer drawn) {
+        for (int i = -1; i <= 1; i++) {
+            effects.play(EffectData.builder().emitter("e", e -> e.capacity(1).spawn(Spawn.burst(0, 1))
+                .init(Init.lifetime(100), Init.size(Bind.constant(1.2f)), Init.color(Bind.color(1, 1, 1, 1)))
+                .render(drawn)).build(), x + 0.6 * i, y, -20);
+        }
+    }
+
+    /** Billboards lit as {@code lighting}. */
+    private static Renderer lit(Renderer.Lighting lighting) {
+        return Renderer.billboard(Renderer.Facing.POSITION).lighting(lighting);
+    }
+
+    /**
+     * A cloud 20 m ahead drawn by {@code drawn}, 1.5 m above a point light and then a spot light shining up at it: both
+     * light it. The per-pixel draws once looked their clusters up at a fragment's SV_Position.w (1 / depth: the first
+     * slice, which no light 20 m away reaches), the per-vertex lighting at pixel (0, 0) (from the View's outputSize,
+     * which the engine leaves 0): the top left tile, which these lights do not reach.
+     */
+    private void lightNextToAFarCloud(Renderer drawn, boolean spot) {
+        farGraph();
+        farCloud(0, 0.5, drawn);
+        double away = red(frames(3), 0, SIZE);
+        lights.point(0, 0, -1, -20, 3, 6, 6, 6);
+        double point = red(frames(3), 0, SIZE);
+        assertThat(away).as("the sky alone").isGreaterThan(0);
+        assertThat(point).as("lit by the point light below, against %.2f without it", away).isGreaterThan(2 * away);
+        if (spot) {
+            lights.spot(0, 0, -1, -20, 3, 6, 6, 6, 0, 1, 0, 0.5, 0.8);
+            double spotLit = red(frames(3), 0, SIZE);
+            assertThat(spotLit).as("lit by the spot light below, against %.2f without it", away)
+                .isGreaterThan(2 * away);
+        }
+    }
+
+    @Test
+    void particlesLitPerVertexFarFromTheCameraTakeTheLightsNextToThem() {
+        lightNextToAFarCloud(lit(Renderer.Lighting.PER_VERTEX), true);
+    }
+
+    @Test
+    void particlesLitPerPixelFarFromTheCameraTakeTheLightsNextToThem() {
+        lightNextToAFarCloud(lit(Renderer.Lighting.PER_PIXEL), true);
+    }
+
+    @Test
+    void particlesLitPerPixelAtHalfResolutionTakeTheLightsNextToThem() {
+        // Drawn into a target of half the view's size: their fragments' pixels are not the pixels the clusters tile
+        lightNextToAFarCloud(lit(Renderer.Lighting.PER_PIXEL).set("half", 1), false);
+        assertThat(graph.passes()).contains("particle draw, half");
+    }
+
+    /**
+     * A cloud 20 m ahead under a roof and another in the open, lit as {@code lighting} by a sun casting shadows through
+     * three cascades to 30 m: the roof shades the first. Its shadow is in the far cascades only; looked up at a
+     * fragment's SV_Position.w (1 / depth) the cascade was the first, which does not reach 20 m: lit.
+     */
+    private void farCloudUnderARoof(Renderer.Lighting lighting) {
+        graph(true, 100, Math.PI / 8);
+        lights.directional(0, 0.1f, -1, 0.05f, 1.5f, 1.5f, 1.5f);
+        lights.shadow(0, ShadowSpec.cascades(3, 1024, 30));
+        shadows = new Shadows(SceneGeometry.meshlets(renderer), lights);
+        view.port().add(shadows.view(view));
+        int quad = pool.add(TestMeshes.quad());
+        int roof = materials.add(new com.truesim.engine.render.Material(MetallicRoughnessParameters.DEFAULTS
+            .withBaseColor(new Color(0.5f, 0.5f, 0.5f, 1))).doubleSided(true));
+        scene.setMaterials(materials);
+        scene.set(0, quad, roof, -3, 3, -20, -0.70710677f, 0, 0, 0.70710677f, 2, 2, 2); // 4 m square, flat, 3 m up
+        farCloud(-3, 0, lit(lighting));
+        farCloud(3, 0, lit(lighting));
+        int[] image = frames(4);
+        scene.setMaterials(null);
+        // The clouds' rows (the roof is drawn 24 pixels higher)
+        double under = red(image, 0, SIZE / 2, SIZE / 2 - 8, SIZE / 2 + 8);
+        double open = red(image, SIZE / 2, SIZE, SIZE / 2 - 8, SIZE / 2 + 8);
+        assertThat(open).as("the open cloud, sunlit").isGreaterThan(10);
+        assertThat(under).as("the cloud under the roof, against %.2f in the open", open).isLessThan(0.7 * open);
+    }
+
+    @Test
+    void particlesLitPerPixelFarFromTheCameraTakeTheSunsShadowFromTheirCascade() {
+        farCloudUnderARoof(Renderer.Lighting.PER_PIXEL);
+    }
+
+    @Test
+    void particlesLitPerVertexFarFromTheCameraTakeTheSunsShadowFromTheirCascade() {
+        farCloudUnderARoof(Renderer.Lighting.PER_VERTEX);
+    }
+
+    /** The mean red of columns {@code x0} to {@code x1} and rows {@code y0} to {@code y1} (excluded). */
+    private static double red(int[] image, int x0, int x1, int y0, int y1) {
+        double sum = 0;
+        for (int y = y0; y < y1; y++) {
+            for (int x = x0; x < x1; x++) {
+                sum += image[y * SIZE + x] & 0xff;
+            }
+        }
+        return sum / ((x1 - x0) * (y1 - y0));
     }
 }

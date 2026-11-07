@@ -23,6 +23,7 @@ import com.truesim.engine.graph.Order;
 import com.truesim.engine.graph.PassContext;
 import com.truesim.engine.graph.Store;
 import com.truesim.engine.graph.Technique;
+import com.truesim.engine.graph.ViewPort;
 import com.truesim.engine.render.Camera;
 import com.truesim.engine.render.Keys;
 import com.truesim.engine.render.SceneView;
@@ -111,7 +112,7 @@ public final class ParticleDraw implements Technique {
         this.view = Objects.requireNonNull(view, "view");
         this.center = center;
         this.before = before;
-        this.draws = view.port().own(new Draws(particles, before));
+        this.draws = view.port().own(new Draws(particles, view.port(), before));
     }
 
     /**
@@ -420,6 +421,7 @@ public final class ParticleDraw implements Technique {
      */
     static final class Draws implements AutoCloseable {
         private final Particles particles;
+        private final ViewPort port;
         private final boolean before;
         private final FrameBuffer records;
         private final Staging staged = new Staging((long) ParticleDrawRecordLayout.BYTES * MAX_DRAWS);
@@ -440,8 +442,9 @@ public final class ParticleDraw implements Technique {
         private int largestLit;
 
         @AllowAllocation("made with its view")
-        Draws(Particles particles, boolean before) {
+        Draws(Particles particles, ViewPort port, boolean before) {
             this.particles = particles;
+            this.port = port;
             this.before = before;
             records = FrameBuffer.create(particles.device(), (long) ParticleDrawRecordLayout.BYTES * MAX_DRAWS,
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, particles.slots());
@@ -535,6 +538,10 @@ public final class ParticleDraw implements Technique {
                 staged.putLong(at + ParticleDrawRecordLayout.LIGHTS, lights);
                 staged.putLong(at + ParticleDrawRecordLayout.INDIRECT, indirect);
                 staged.putInt(at + ParticleDrawRecordLayout.HOOK_ENTRY, particles.listHookEntry(e));
+                // The pixels the light clusters are binned over (ClusteredLights: its port's), which lit particles
+                // look their lights up in by where they project, whatever the target they are drawn into
+                staged.putInt(at + ParticleDrawRecordLayout.PIXELS, port.width());
+                staged.putInt(at + ParticleDrawRecordLayout.PIXELS + 4, port.height());
                 lit += lighting != ParticleConstants.LIGHTING_UNLIT ? 1 : 0;
                 if (lighting == ParticleConstants.LIGHTING_VERTEX) {
                     vertexLit++;

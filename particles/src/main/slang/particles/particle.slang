@@ -245,7 +245,7 @@ public struct ParticleRenderer
 };
 
 /**
- * A draw of one renderer of one emitter instance in a view: 48 bytes, written by the CPU each frame. Draws of one
+ * A draw of one renderer of one emitter instance in a view: 80 bytes, written by the CPU each frame. Draws of one
  * pipeline next to each other in the view's order are one indirect multi-draw, each reading its record by draw index.
  */
 [HostLayout]
@@ -264,6 +264,8 @@ public struct ParticleDrawRecord
                                    // sky. The probe volume's light comes through the view's shading hooks
     public uint hookEntry;         // its emitter's shading hook override entry (its node's); 0: the view's values
     public uint pad;
+    public uint2 pixels;           // the view's pixels across and down, as its light clusters are binned over them: where
+                                   // a lit particle looks its lights up (the View's outputSize is not set by the engine)
 };
 
 // ---------------------------------------------------------------------------------------------- modules
