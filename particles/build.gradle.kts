@@ -8,10 +8,10 @@ description = "GPU particles for true-sim: scene-effects' effects simulated, sor
     "graph, and a world's effects synced from the scene."
 
 dependencies {
-    api("com.truesim.engine:engine-scene:0.187.0") // the renderer, the scene bridge and its resources
+    api("com.truesim.engine:engine-scene:0.190.0") // the renderer, the scene bridge and its resources
     api("com.truesim.scene:scene-effects:0.70.0") // effects as data, their spawns and the Java reference
     api("com.truesim.scene:scene-animation:0.70.0") // animation events and curves driving effects
-    testImplementation(testFixtures("com.truesim.engine:engine-render:0.187.0")) // the headless renderer
+    testImplementation(testFixtures("com.truesim.engine:engine-render:0.190.0")) // the headless renderer
     testImplementation("com.truesim.scene:scene-meshbuild:0.70.0")
     // These draws as a library of the tests: the test sources' shading hook listing rebuilds them with its hooks (the
     // test fog), as a game's listing does (build-logic collects the shaders that shade from the test classpath's jars)
