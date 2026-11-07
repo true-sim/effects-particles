@@ -32,7 +32,9 @@ import com.truesim.engine.scene.SceneResources;
 import com.truesim.engine.vulkan.FrameBuffer;
 import com.truesim.engine.vulkan.FrameSlots;
 import com.truesim.engine.vulkan.GpuBuffer;
+import com.truesim.engine.render.ShadingHooks;
 import com.truesim.engine.vulkan.Pipeline;
+import com.truesim.engine.vulkan.Specialization;
 import com.truesim.engine.vulkan.Retiring;
 import com.truesim.engine.vulkan.ShaderModule;
 import com.truesim.engine.vulkan.VulkanDevice;
@@ -187,6 +189,7 @@ public final class Particles implements AutoCloseable {
     private MeshletRenderer meshRenderer;
     private final MeshTables meshTables;
     private Sources sources;
+    private HookEntries hookEntries; // each effect's shading hook override entry, or none
     private FrameBuffer sourceTable;
     private final Staging sourceStaged = new Staging(16L * ParticleSourceLayout.BYTES);
     private int sourceCount;
@@ -297,6 +300,7 @@ public final class Particles implements AutoCloseable {
     private final double[] listPosition;
     private final double[] listRotation;
     private final float[] listTime;
+    private final int[] listHookEntry; // its effect's shading hook override entry (0: the view's values)
     private final double[] beamEnds;
     private final boolean[] beamEnded;
     private final GpuBuffer order;
@@ -330,7 +334,7 @@ public final class Particles implements AutoCloseable {
     private int eventSort = EVENTS_EITHER;
     private long statisticsFrame = -1;
     private final Readback receiver = this::receive;
-    private final Map<Integer, Pipeline> pipelines = new HashMap<>();
+    private final Map<Object, Pipeline> pipelines = new HashMap<>(); // by PipelineKey, or a color format's
 
     /** Particles in a pool of {@code budget} bytes, with up to {@value #DEFAULT_EMITTERS} emitter instances. */
     public Particles(VulkanDevice device, FrameSlots slots, long budget) {
@@ -374,6 +378,7 @@ public final class Particles implements AutoCloseable {
         listPosition = new double[3 * records];
         listRotation = new double[4 * records];
         listTime = new float[records];
+        listHookEntry = new int[records];
         listHidden = new boolean[records];
         beamEnds = new double[3 * maxEmitters];
         beamEnded = new boolean[maxEmitters];
@@ -1242,6 +1247,7 @@ public final class Particles implements AutoCloseable {
                 listRotation[4 * index + 2] = qz;
                 listRotation[4 * index + 3] = qw;
                 listTime[index] = (float) (time * 1e-6);
+                listHookEntry[index] = hookEntries == null ? 0 : hookEntries.entry(effect);
                 places[slot][e] = index;
                 demand[index] = 0;
                 int at = ParticleEmitterLayout.BYTES * index;
@@ -1403,6 +1409,7 @@ public final class Particles implements AutoCloseable {
                 listRotation[4 * index + c] = effects.rotation(effect, c);
             }
             listTime[index] = listTime[from];
+            listHookEntry[index] = hookEntries == null ? 0 : hookEntries.entry(effect);
             listHidden[index] = false;
             sortOf[index] = ParticleConstants.NO_SORT;
             sortable(index, block, e, instance);
@@ -1857,6 +1864,28 @@ public final class Particles implements AutoCloseable {
         void emit(long effect, int emitter);
     }
 
+    /**
+     * Where an effect's particles take their shading hooks' values from: a per-instance override entry of the
+     * renderer's (engine-render's {@code ShadingHookOverrides}), as the renderables of its node take theirs, so a node
+     * overriding the fog (none inside a house) overrides it for the effects under it too.
+     */
+    @FunctionalInterface
+    public interface HookEntries {
+
+        /** The override entry of playing effect {@code effect} (0: the view's values). Allocates nothing. */
+        int entry(long effect);
+    }
+
+    /**
+     * Asks {@code entries} each effect's shading hook override entry, from the next update on (null: none, every
+     * particle the view's values). engine-scene's {@code ShadingHookOverrideSync.entryOf} of the effect's node:
+     * {@link com.truesim.effects.particles.scene.EffectSync#hookOverrides}.
+     */
+    public Particles hookEntries(HookEntries entries) {
+        this.hookEntries = entries;
+        return this;
+    }
+
     /** Asks {@code sources} what mesh and bone shapes emit from, from the next update on (null: nobody). */
     public Particles sources(Sources sources) {
         this.sources = sources;
@@ -2231,6 +2260,15 @@ public final class Particles implements AutoCloseable {
         return listPosition[3 * index + axis] + length * up;
     }
 
+    /**
+     * The shading hook override entry of the emitter at {@code index} of the frame's list (engine-render's
+     * {@code ShadingHookOverrides}; 0: none): its particles' hooks take its values (fog, media) as its node's
+     * renderables do.
+     */
+    int listHookEntry(int index) {
+        return listHookEntry[index];
+    }
+
     /** The effect time of the emitter at {@code index} of the frame's list, in seconds. */
     float listTime(int index) {
         return listTime[index];
@@ -2474,10 +2512,14 @@ public final class Particles implements AutoCloseable {
 
     /**
      * The pipeline drawing renderers of {@code kind} ({@code RENDER_*}: billboards, ribbons, trails, beams) into color
-     * attachments of {@code format} (a VkFormat), made once.
+     * attachments of {@code format} (a VkFormat), made once, running no shading hook.
      */
     Pipeline pipeline(int kind, int format) {
-        return pipeline(kind, format, DRAW_COLOR);
+        return pipeline(kind, format, DRAW_COLOR, ShadingHooks.of(device).specialization(ShadingHooks.Set.NONE));
+    }
+
+    /** A draw pipeline's key: its kind, color format, mode and the shading hooks' constants it is made with. */
+    private record PipelineKey(int kind, int format, int mode, Specialization constants) {
     }
 
     /** Pipelines' fragment shaders: particles' color, the reactive mask's coverage, an overdraw heat map. */
@@ -2487,11 +2529,13 @@ public final class Particles implements AutoCloseable {
 
     /**
      * The pipeline drawing renderers of {@code kind} into {@code format}: premultiplied ({@code DRAW_COLOR}), or added:
-     * their coverage for the reactive mask, a constant per layer for the overdraw heat map.
+     * their coverage for the reactive mask, a constant per layer for the overdraw heat map; running the shading hooks
+     * of {@code constants} (a view's, engine-render's {@code ShadingHookInputs.Set.specialization}: draw.spv declares
+     * every hook's switch).
      */
-    @AllowAllocation("a pipeline made once per kind, color format and mode")
-    Pipeline pipeline(int kind, int format, int mode) {
-        int key = (format * 8 + kind) * 4 + mode;
+    @AllowAllocation("a pipeline made once per kind, color format, mode and hooks")
+    Pipeline pipeline(int kind, int format, int mode, Specialization constants) {
+        PipelineKey key = new PipelineKey(kind, format, mode, constants);
         Pipeline pipeline = pipelines.get(key);
         if (pipeline == null) {
             String entry = switch (kind) {
@@ -2504,8 +2548,8 @@ public final class Particles implements AutoCloseable {
                 pipeline = Pipeline.graphics(device).stage(VK_SHADER_STAGE_VERTEX_BIT, shaders, entry)
                     .stage(VK_SHADER_STAGE_FRAGMENT_BIT, shaders, mode == DRAW_REACTIVE ? "reactiveMain"
                         : mode == DRAW_OVERDRAW ? "overdrawMain" : "fragmentMain")
-                    .color(format).blend(0, mode == DRAW_COLOR ? Pipeline.Blend.PREMULTIPLIED : Pipeline.Blend.ADDITIVE).pushConstants(ParticleDrawPush.BYTES).doubleSided()
-                    .build();
+                    .color(format).blend(0, mode == DRAW_COLOR ? Pipeline.Blend.PREMULTIPLIED : Pipeline.Blend.ADDITIVE)
+                    .pushConstants(ParticleDrawPush.BYTES).doubleSided().constants(constants).build();
             }
             pipelines.put(key, pipeline);
         }
@@ -2515,7 +2559,7 @@ public final class Particles implements AutoCloseable {
     /** The pipeline laying half-resolution particles over a view of {@code format} (particles/upsample.slang). */
     @AllowAllocation("a pipeline made once per color format")
     Pipeline upsamplePipeline(int format) {
-        int key = -1 - format;
+        Integer key = format;
         Pipeline pipeline = pipelines.get(key);
         if (pipeline == null) {
             try (ShaderModule shaders = ShaderModule.load(device, "shaders/particles/upsample.spv")) {

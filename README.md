@@ -128,6 +128,14 @@ particles.update(effects, runtime.spawns());
   particles.modules(GameModules.MODULES);   // slang { particleModules = "com.example.game.GameModules" }
   EffectData leaves = EffectData.builder().emitter(...).build(GameModules.MODULES.registry());
   ```
+- **Shading hooks** (engine-render's README, "Writing a shading hook"): the draws run the view's hooks as its surfaces
+  do, made with its hooks' constants (`ShadingHookInputs`): lit particles take the light from all around through the
+  indirect hooks (the probe volume where it reaches, the environment elsewhere), and every particle's light goes through
+  the media hooks on its way to the camera (fog; the light they add in front of it where it covers what is behind, so
+  nothing is fogged twice). No surface hook. An emitter takes its node's override entry
+  (`EffectSync.hookOverrides(ShadingHookOverrideSync)`, engine-scene's per-node overrides): a node turning the fog off
+  turns it off for the effects under it as for its renderables. A game's hook listing rebuilds these draws with its
+  hooks (this jar's `shading-shaders.index`); the tests' listing does too (the test sources' fog, `test/hooks`).
 - **Glass order** (`glass` 1: drawn by `ParticleDraw.beforeGlass`, tinted by the glass in front; 2: split at a view's
   `ParticleKeys.GLASS_DEPTH`) and TAA hooks: the reactive mask (`ParticleKeys.REACTIVE`) and mesh particles'
   transforms a frame before (`ParticleKeys.PREVIOUS_INSTANCES`).

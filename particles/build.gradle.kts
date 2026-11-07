@@ -13,10 +13,16 @@ dependencies {
     api("com.truesim.scene:scene-animation:0.70.0") // animation events and curves driving effects
     testImplementation(testFixtures("com.truesim.engine:engine-render:0.187.0")) // the headless renderer
     testImplementation("com.truesim.scene:scene-meshbuild:0.70.0")
+    // These draws as a library of the tests: the test sources' shading hook listing rebuilds them with its hooks (the
+    // test fog), as a game's listing does (build-logic collects the shaders that shade from the test classpath's jars)
+    testRuntimeOnly(project(":effects-particles"))
 }
 
 // The particle records and constants of src/main/slang (particles/particle.slang), as Java.
 slang {
+    // The test sources' shading hook (test/hooks/testFog.slang): its record, and the listing rebuilding the shading
+    // (the engine's, these draws) with it
+    javaPackage = "com.truesim.effects.particles.hooks"
     pushPackage = "com.truesim.effects.particles.layout"
     pushBase = "com.truesim.engine.vulkan.PushConstants" // push layouts are writers too
     constantModules = listOf("particles/particle") // ParticleConstants
