@@ -24,9 +24,11 @@ final class Village {
         int wall = stage.material(0.74f, 0.70f, 0.62f, 0.9f, 0, 0, 0);
         int timber = stage.material(0.30f, 0.20f, 0.12f, 0.8f, 0, 0, 0);
         int roof = stage.material(0.34f, 0.26f, 0.22f, 0.7f, 0, 0, 0);
-        int window = stage.material(0.05f, 0.05f, 0.05f, 0.4f, 22, 13, 5);
+        // emissive and light intensities in the stage's scene units (pre-exposed as the fireworks' are)
+        float u = stage.settings.get(FireworksSettings.LUMINANCE_SCALE);
+        int window = stage.material(0.05f, 0.05f, 0.05f, 0.4f, 22 * u, 13 * u, 5 * u);
         int stone = stage.material(0.42f, 0.40f, 0.38f, 0.8f, 0, 0, 0);
-        int bulb = stage.material(0.1f, 0.1f, 0.1f, 0.5f, 900, 560, 220);
+        int bulb = stage.material(0.1f, 0.1f, 0.1f, 0.5f, 900 * u, 560 * u, 220 * u);
         int iron = stage.material(0.05f, 0.05f, 0.06f, 0.4f, 0, 0, 0);
         stage.place(stage.box, meadow, 0, -0.5, -200, 0, 0, 2000, 0.5f, 2000);
         stage.place(stage.box, cobbles, 0, 0.01, 0, 0, 0, 22, 0.02f, 22);
@@ -50,7 +52,8 @@ final class Village {
             stage.place(stage.box, bulb, l[0], 4.1, l[1], 0, 0, 0.12f, 0.15f, 0.12f);
             long lamp = stage.scene.create();
             stage.scene.setTranslation(lamp, l[0], 4.0, l[1]);
-            stage.scene.components().set(lamp, LightSource.TYPE, LightSource.point(1, 0.62f, 0.25f, 260).range(40));
+            stage.scene.components().set(lamp, LightSource.TYPE, LightSource.point(1, 0.62f, 0.25f, 260 * u)
+                .range(40));
         }
         // the field the mortars stand in, beyond the far houses, and a few trees' dark shapes along it
         for (int i = 0; i < 40; i++) {

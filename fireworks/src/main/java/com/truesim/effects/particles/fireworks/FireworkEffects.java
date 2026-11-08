@@ -65,11 +65,6 @@ public final class FireworkEffects {
         .linear(0.3f, 1, 0.8f, 0.6f, 1).linear(1, 0.4f, 0.1f, 0.02f, 0).build();
     private static final ColorGradient FLASH_FADE = ColorGradient.builder().linear(0, 1, 1, 1, 1).linear(1, 0, 0, 0, 0)
         .build();
-    private static final ColorGradient SMOKE_FADE = ColorGradient.builder().linear(0, 1, 1, 1, 0)
-        .linear(0.04f, 1, 1, 1, 1).linear(0.5f, 1, 1, 1, 0.65f).linear(1, 1, 1, 1, 0).build();
-    private static final FloatCurve SMOKE_GROWTH = FloatCurve.of(0, 1, 0.3f, 2, 1, 3.2f);
-    /** Smoke's albedo: grey, as the potassium salts' white smoke dims with soot. */
-    private static final float SMOKE_ALBEDO = 0.55f;
 
     private final EngineSettings settings;
     private final Map<Key, EffectData[]> made = new HashMap<>();
@@ -142,9 +137,9 @@ public final class FireworkEffects {
         float drag = (float) d.shellDrag();
         float tailRate = 80;
         float sparkLife = 0.6f;
-        float smoke = f(FireworksSettings.SMOKE) * 6;
-        float smokeTime = f(FireworksSettings.SMOKE_TIME) * 0.5f;
-        float opacity = f(FireworksSettings.SMOKE_OPACITY) * 0.5f;
+        float smoke = f(FireworksSettings.SMOKE);
+        Smoke medium = Smoke.of(settings);
+        double calibre = d.shell().calibre();
         EffectData.Builder b = EffectData.builder(TYPE)
             .parameter(VELOCITY_X, 0).parameter(VELOCITY_Y, 0).parameter(VELOCITY_Z, 0)
             .parameter(FUSE, MAX_FUSE)
@@ -173,10 +168,14 @@ public final class FireworkEffects {
                 .update(Over.color(FLASH_FADE))
                 .render(Renderer.billboard(Renderer.Facing.POSITION).additive()));
         if (smoke > 0) {
-            b.emitter("liftSmoke", e -> smoke(e, capacity(smoke * smokeTime * 0.3f), 0.9f, smokeTime, opacity)
+            // the lift charge's smoke out of the mortar (a sixth of a shell's bursting charge's), and the shell's fuse
+            // trailing a thin line of it: half a gram a second
+            double lift = f(FireworksSettings.BURST_SMOKE) * calibre * calibre / 6;
+            float fuse = (float) Ballistics.apexTime(d.launchSpeed(), d.shellDrag());
+            b.emitter("liftSmoke", e -> smoke(e, medium, capacity(smoke * fuse * 1.2f), 0.4, 0.5 / smoke)
                     .spawn(Spawn.fromEvents())
                     .init(Shape.sphere(0.2f), Init.speed(Bind.random(0.1f, 0.6f)), Init.inherit(0.05f, false, false)))
-                .emitter("muzzleSmoke", e -> smoke(e, 8, 1.4f, smokeTime, opacity * 2).spawn(Spawn.burst(0, 6))
+                .emitter("muzzleSmoke", e -> smoke(e, medium, 8, 1.0, lift / 8).spawn(Spawn.burst(0, 8))
                     .init(Shape.cone(0.35f, 0.15f), Init.speed(Bind.random(1, 4))));
         }
         return b.build(FireworkModules.MODULES.registry());
@@ -195,8 +194,7 @@ public final class FireworkEffects {
         float glow = (float) d.glow();
         float tailRate = f(FireworksSettings.TAIL_RATE);
         float smokeRate = f(FireworksSettings.SMOKE);
-        float smokeTime = f(FireworksSettings.SMOKE_TIME);
-        float opacity = f(FireworksSettings.SMOKE_OPACITY);
+        Smoke medium = Smoke.of(settings);
         float radius = (float) d.radius();
         double calibre = shell.calibre();
         EffectData.Builder b = EffectData.builder(TYPE)
@@ -243,14 +241,12 @@ public final class FireworkEffects {
                 Init.color(Bind.param(FLASH)))
             .update(Over.color(FLASH_FADE))
             .render(Renderer.billboard(Renderer.Facing.POSITION).additive()));
-        // the bursting charge's smoke, a cloud about the burst's centre
-        // (on a shell about the centre, thin: the burst's light, a point at the centre, would light smoke there far
-        // more than the stars spread around it do)
-        int puffs = (int) Math.round((6 + calibre * calibre) * Math.min(1, smokeRate));
-        if (puffs > 0) {
-            float puff = radius * 0.15f;
-            b.emitter("smoke", e -> smoke(e, puffs, puff, smokeTime, opacity * 0.5f).spawn(Spawn.burst(0, puffs))
-                .init(Shape.sphere(radius * 0.3f, 0.4f), Init.speed(Bind.random(0.5f, 2.5f))));
+        // the bursting charge's smoke, a cloud about the burst's centre: its grams in puffs of a tenth of the radius
+        int puffs = smokeRate > 0 ? (int) Math.round(12 + 3 * calibre * calibre) : 0;
+        double charge = f(FireworksSettings.BURST_SMOKE) * calibre * calibre;
+        if (puffs > 0 && charge > 0) {
+            b.emitter("smoke", e -> smoke(e, medium, puffs, radius * 0.1, charge / puffs).spawn(Spawn.burst(0, puffs))
+                .init(Shape.sphere(radius * 0.3f), Init.speed(Bind.random(0.5f, 2.5f))));
         }
         if (shell.pistil()) {
             int n = d.pistilStars();
@@ -312,11 +308,15 @@ public final class FireworkEffects {
                 .render(glowing(glow * 0.9f)));
         }
         if (smokeRate > 0) {
-            // what the stars leave as they burn: a puff every so often along their paths
+            // what the stars leave as they burn: their grams a second in puffs along their paths
             float puffs2 = parents * smokeRate * parentLife * 1.2f;
-            b.emitter("starSmoke", e -> smoke(e, capacity(puffs2), Math.max(2f, radius * 0.08f), smokeTime, opacity)
+            double grams = f(FireworksSettings.SMOKE_MASS) / smokeRate;
+            // scattered a few deviations about the path: puffs every star leaves at once would otherwise lie on
+            // spheres about the burst, showing as rings
+            float puff = f(FireworksSettings.SMOKE_PUFF);
+            b.emitter("starSmoke", e -> smoke(e, medium, capacity(puffs2), puff, grams)
                 .spawn(Spawn.fromEvents())
-                .init(Shape.sphere(0.1f), Init.speed(Bind.random(0.05f, 0.4f)), Init.inherit(0.08f, false, false)));
+                .init(Shape.sphere(2.5f * puff), Init.speed(Bind.random(0.05f, 0.6f)), Init.inherit(0.2f, false, false)));
         }
         return b.build(FireworkModules.MODULES.registry());
     }
@@ -340,19 +340,26 @@ public final class FireworkEffects {
     }
 
     /**
-     * Smoke puffs: {@code size} metres across at first, growing threefold, lit per vertex by the lights about them
-     * (bursts light the smoke of those before), alpha blended and soft, drifting with the wind and rising a little.
+     * Smoke puffs of the medium {@code smoke}: Gaussians of {@code grams} and deviation {@code sigma0} metres at first,
+     * spreading by turbulence (their size over life) so their optical depth falls as their mass stays (their alpha,
+     * the depth at the centre, over life), their colour the albedo; drawn as a medium (three deviations either way,
+     * at half resolution), scattering by the phase function the lights about them (bursts light the smoke of those
+     * before), shadowing themselves; drifting with the wind and rising a little. Every puff lives the smoke's time, so
+     * the curves over its life are its spreading's.
      */
     @AllowAllocation("made once per shell type")
-    private static EmitterData.Builder smoke(EmitterData.Builder e, int capacity, float size, float time,
-        float opacity) {
+    static EmitterData.Builder smoke(EmitterData.Builder e, Smoke smoke, int capacity, double sigma0,
+        double grams) {
+        float tau = (float) smoke.centralDepth(grams, sigma0);
+        float albedo = (float) smoke.albedo();
         return e.capacity(Math.max(1, capacity))
-            .init(Init.lifetime(Bind.random(time * 0.6f, time)), Init.size(Bind.random(size * 0.7f, size * 1.3f)),
-                Init.color(Bind.color(SMOKE_ALBEDO, SMOKE_ALBEDO, SMOKE_ALBEDO, opacity)), Init.randomRotation())
-            .update(Forces.gravity(Bind.constant(-0.004f)), Forces.wind(0.6f, 1, 0.3f), Over.size(SMOKE_GROWTH),
-                Over.color(SMOKE_FADE))
+            .init(Init.lifetime(Bind.constant((float) smoke.time())), Init.size(Bind.constant((float) (6 * sigma0))),
+                Init.color(Bind.color(albedo, albedo, albedo, tau)))
+            .update(Forces.gravity(Bind.constant(-0.004f)), Forces.wind(0.6f, 1, 0.3f),
+                Over.size(smoke.sizeOverLife(sigma0)), Over.color(smoke.depthOverLife(sigma0)))
             .render(Renderer.billboard(Renderer.Facing.POSITION).lighting(Renderer.Lighting.PER_VERTEX).alphaToAdd(0)
-                .set("soft", Math.max(1, size)));
+                .set("medium", 1).set("phase", (float) smoke.phase()).set("half", 1)
+                .set("soft", (float) Math.max(1, 3 * sigma0)));
     }
 
     /**

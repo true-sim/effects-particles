@@ -7,7 +7,19 @@ import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
+import com.truesim.common.jobs.TaskScheduler;
 import com.truesim.common.math.color.Color;
+import com.truesim.effects.atmosphere.Quality;
+import com.truesim.effects.atmosphere.ephemeris.Observer;
+import com.truesim.effects.atmosphere.render.Atmosphere;
+import com.truesim.effects.atmosphere.render.AtmosphereQuality;
+import com.truesim.effects.atmosphere.render.AtmosphereSky;
+import com.truesim.effects.atmosphere.render.AtmosphereSync;
+import com.truesim.effects.atmosphere.render.SkyCapture;
+import com.truesim.effects.atmosphere.sky.SkyAssets;
+import com.truesim.effects.atmosphere.sky.SkyComponents;
+import com.truesim.effects.atmosphere.sky.SkySettings;
+import com.truesim.effects.atmosphere.sky.SkyTime;
 import com.truesim.common.state.ChangeClock;
 import com.truesim.effects.particles.ParticleDraw;
 import com.truesim.effects.particles.ParticleSimulation;
@@ -40,8 +52,6 @@ import com.truesim.engine.render.Materials;
 import com.truesim.engine.render.MeshletRenderer;
 import com.truesim.engine.render.SceneGeometry;
 import com.truesim.engine.render.SceneView;
-import com.truesim.engine.render.SkyBackground;
-import com.truesim.engine.render.TextureFormat;
 import com.truesim.engine.render.Textures;
 import com.truesim.engine.render.ViewOptions;
 import com.truesim.engine.render.materials.MetallicRoughnessParameters;
@@ -54,23 +64,23 @@ import com.truesim.engine.vulkan.GpuBuffer;
 import com.truesim.engine.vulkan.VulkanDevice;
 import com.truesim.engine.vulkan.VulkanException;
 import com.truesim.engine.vulkan.VulkanInstance;
+import com.truesim.scene.assets.AssetCache;
+import com.truesim.scene.assets.PathAssets;
 import com.truesim.scene.assets.mesh.MeshData;
 import com.truesim.scene.core.SceneGraph;
 import com.truesim.scene.effects.Effects;
-import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.ByteOrder;
 import java.util.List;
-import java.util.SplittableRandom;
 import org.lwjgl.vulkan.VkBufferImageCopy;
 
 /**
  * The tests' and films' stage: the engine's renderer straight (a test's fixture), a scene graph whose light components
  * the engine's {@link LightSync} places (the bursts' lights), the GPU particles with the fireworks' kernel synced from
  * the scene's effects ({@link EffectSync}) and the scene's shows played by {@link FireworksSync}; drawn by clustered
- * forward shading into 16-bit floats with the particles, then optionally a night sky, bloom (effects-post), auto
- * exposure and the display transform into an sRGB target. Scene colour is in cd/m² (a luminance scale of 1).
+ * forward shading into 16-bit floats with the particles, then for films effects-atmosphere's night sky (stars, moon,
+ * airglow, the Milky Way; the sky captured into the environment), bloom and auto exposure (effects-post) and the
+ * display transform. Scene colour is in cd/m² for tests; films pre-expose it as the atmosphere does ({@link #exposeAt}).
  */
 final class Stage implements AutoCloseable {
 
@@ -102,6 +112,13 @@ final class Stage implements AutoCloseable {
     final GpuBuffer shownPixels;
     final int box;
     final int rock;
+    /** An Alpine village: 47.56 N, 13.65 E, 510 m (Hallstatt). */
+    static final Observer ALPS = new Observer(47.56, 13.65, 510);
+    final TaskScheduler tasks;
+    final AssetCache cache;
+    final Atmosphere atmosphere;
+    final AtmosphereSync sky;
+    final long environmentNode;
     private int instances;
 
     /** What the view draws after shading and the particles. */
@@ -157,9 +174,28 @@ final class Stage implements AutoCloseable {
         port.add(new ClusteredForwardShading(geometry, view, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_D32_SFLOAT)
             .clearColor(0, 0, 0));
         if (look == Look.FILM) {
-            int sky = textures.add(TextureFormat.RGBA16F, 2048, 1024, Textures.GENERATE, nightSky(2048, 1024));
-            Environment environment = Environment.panorama("night sky", sky, 2048);
-            port.add(new EnvironmentLighting(environment, view)).add(new SkyBackground(environment, view));
+            // effects-atmosphere's sky: the atmosphere, the sun and the moon (lights 0 and 1), the stars of the bundled
+            // catalogue, airglow and the Milky Way, captured into the environment that lights the scene
+            tasks = new TaskScheduler();
+            cache = new AssetCache(tasks);
+            PathAssets paths = new PathAssets(cache);
+            SkyAssets.install(paths);
+            atmosphere = new Atmosphere(device, graph.frameSlots(), settings);
+            AtmosphereQuality.apply(settings, Quality.HIGH);
+            environmentNode = scene.create();
+            scene.components().set(environmentNode, SkyComponents.SKY, SkySettings.forQuality(Quality.HIGH, ALPS));
+            sky = new AtmosphereSync(scene, environmentNode, cache, paths, atmosphere);
+            Environment environment = Environment.uniform("atmosphere", 0, 0, 0);
+            lights.add(); // the sun
+            lights.add(); // the moon
+            port.add(new SkyCapture(atmosphere, environment, textures)).add(new EnvironmentLighting(environment, view))
+                .add(new AtmosphereSky(atmosphere, view));
+        } else {
+            tasks = null;
+            cache = null;
+            atmosphere = null;
+            sky = null;
+            environmentNode = 0;
         }
         port.add(new ClusteredLights(lights, view)).add(new ParticleDraw(particles, view));
         int shownUsage = TestTarget.USAGE | org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_STORAGE_BIT;
@@ -294,8 +330,15 @@ final class Stage implements AutoCloseable {
      */
     void frame(double seconds) {
         fireworks.update(seconds);
+        if (tasks != null) {
+            tasks.drainCompleted();
+        }
         scene.update();
         lightSync.update();
+        if (sky != null) {
+            sky.update(fireworks.time(), camera.position(0), camera.position(1), camera.position(2));
+            atmosphere.light(lights, 0, 1);
+        }
         graph.beginFrame();
         fx.update(seconds);
         view.set(1, MeshletRenderer.MODE_LIT);
@@ -319,6 +362,39 @@ final class Stage implements AutoCloseable {
             Float.float16ToFloat(m.get(ValueLayout.JAVA_SHORT_UNALIGNED, at + 4))};
     }
 
+    /** The sky at UT Julian day {@code jd}, frozen. */
+    void skyAt(double jd) {
+        scene.components().set(environmentNode, SkyComponents.SKY_TIME, new SkyTime(jd, 0));
+    }
+
+    /** Frames until the star catalogue has loaded. */
+    void loadSky() throws InterruptedException {
+        long deadline = System.nanoTime() + 120_000_000_000L;
+        while (!sky.starsReady()) {
+            frames(1, 0);
+            if (System.nanoTime() > deadline) {
+                throw new IllegalStateException("the star catalogue did not load");
+            }
+            Thread.sleep(2);
+        }
+        frames(4, 0);
+    }
+
+    /**
+     * Pre-exposes scene colour as the atmosphere does, at {@code ev100} (AtmosphereExposure's choice for the night):
+     * scene colour is cd/m² times 1 / (1.2 2^EV100), the fireworks' luminance scale and auto exposure's set to match.
+     */
+    void exposeAt(double ev100) {
+        this.ev100 = ev100;
+        settings.set(AtmosphereSky.ATMOSPHERE.<Float>setting("ev100"), (float) ev100);
+        double units = 1 / (1.2 * Math.pow(2, ev100));
+        settings.set(FireworksSettings.LUMINANCE_SCALE, (float) units);
+        settings.set(AutoExposure.HISTOGRAM.<Float>setting("luminanceScale"), (float) (1 / units));
+    }
+
+    /** The EV100 scene colour is pre-exposed at ({@link #exposeAt}). */
+    private double ev100;
+
     /** Validation errors so far (0 without validation). */
     int validationErrors() {
         return instance.validationErrors();
@@ -329,6 +405,11 @@ final class Stage implements AutoCloseable {
         device.waitIdle();
         fireworks.close();
         graph.close();
+        if (atmosphere != null) {
+            atmosphere.close();
+            cache.close();
+            tasks.close();
+        }
         poolCopy.close();
         probe.close();
         particles.close();
@@ -399,67 +480,5 @@ final class Stage implements AutoCloseable {
             image.setRGB(0, y, width, 1, row, 0, width);
         }
         return image;
-    }
-
-    /**
-     * A clear moonless night over the Alps as a panorama (the engine's mapping: u from atan2(z, x), v from the
-     * zenith), in cd/m²: the sky's airglow, a little brighter towards the horizon, and the village's glow along it; a
-     * faint band of the Milky Way; 6,000 stars to about magnitude 6.5, each a texel whose luminance gives its
-     * illuminance (a magnitude 0 star 2.5 µlx) over the texel's solid angle; a dark ground.
-     */
-    static MemorySegment nightSky(int width, int height) {
-        MemorySegment texels = Arena.ofAuto().allocate(8L * width * height);
-        ValueLayout.OfShort half = ValueLayout.JAVA_SHORT_UNALIGNED.withOrder(ByteOrder.LITTLE_ENDIAN);
-        float[] sky = new float[3 * width * height];
-        double[] pole = {0.3, 0.75, -0.6}; // the Milky Way's pole, roughly
-        double pl = Math.sqrt(pole[0] * pole[0] + pole[1] * pole[1] + pole[2] * pole[2]);
-        for (int y = 0; y < height; y++) {
-            double theta = Math.PI * (y + 0.5) / height;
-            for (int x = 0; x < width; x++) {
-                double phi = 2 * Math.PI * ((x + 0.5) / width - 0.5);
-                double dx = Math.sin(theta) * Math.cos(phi);
-                double dy = Math.cos(theta);
-                double dz = Math.sin(theta) * Math.sin(phi);
-                int i = 3 * (y * width + x);
-                if (dy < 0) {
-                    sky[i] = 2e-4f;
-                    sky[i + 1] = 2e-4f;
-                    sky[i + 2] = 2.2e-4f;
-                    continue;
-                }
-                double horizon = Math.pow(1 - dy, 6);
-                double band = Math.abs(dx * pole[0] + dy * pole[1] + dz * pole[2]) / pl;
-                double milky = 6e-4 * Math.exp(-band * band / (2 * 0.12 * 0.12)) * (0.6 + 0.4 * Math.sin(phi * 3));
-                sky[i] = (float) (5e-4 + 3e-3 * horizon * 1.4 + milky);
-                sky[i + 1] = (float) (6e-4 + 3e-3 * horizon * 1.0 + milky);
-                sky[i + 2] = (float) (1.1e-3 + 3e-3 * horizon * 0.7 + milky * 1.1);
-            }
-        }
-        SplittableRandom random = new SplittableRandom(1969);
-        double texel = (2 * Math.PI / width) * (Math.PI / height);
-        for (int s = 0; s < 6000; s++) {
-            // magnitudes as the sky's counts rise, ~ 10^(0.5 m): uniform in 10^(0.5 m) up to 6.5
-            double m = 2 * Math.log10(random.nextDouble(Math.pow(10, 0.5 * -1), Math.pow(10, 0.5 * 6.5)));
-            double y = random.nextDouble(-0.05, 1);
-            double phi = random.nextDouble(2 * Math.PI) - Math.PI;
-            int py = (int) (Math.acos(y) / Math.PI * height);
-            int px = (int) ((phi / (2 * Math.PI) + 0.5) * width);
-            double theta = Math.PI * (py + 0.5) / height;
-            double lux = 2.5e-6 * Math.pow(10, -0.4 * m);
-            double l = lux / (texel * Math.max(Math.sin(theta), 1e-3));
-            double t = random.nextDouble(); // colour: from blue-white to orange
-            int i = 3 * (Math.min(py, height - 1) * width + Math.min(px, width - 1));
-            sky[i] += (float) (l * (0.8 + 0.4 * t));
-            sky[i + 1] += (float) (l * 0.95);
-            sky[i + 2] += (float) (l * (1.25 - 0.45 * t));
-        }
-        for (int p = 0; p < width * height; p++) {
-            long at = 8L * p;
-            for (int k = 0; k < 3; k++) {
-                texels.set(half, at + 2L * k, Float.floatToFloat16(sky[3 * p + k]));
-            }
-            texels.set(half, at + 6, Float.floatToFloat16(1));
-        }
-        return texels;
     }
 }

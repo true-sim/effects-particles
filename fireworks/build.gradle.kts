@@ -12,6 +12,7 @@ dependencies {
     testImplementation(testFixtures("com.truesim.engine:engine-render:0.194.0")) // the headless renderer
     testImplementation("com.truesim.scene:scene-meshbuild:0.70.0")
     testImplementation("com.truesim.effects:effects-post:0.2.0") // bloom and auto exposure in the films
+    testImplementation("com.truesim.effects:atmosphere-render:0.4.0") // the films' night sky
 }
 
 // The fireworks' particle modules (fireworks/patterns.slang) with the built-in ones: kernel variants of their own.

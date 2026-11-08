@@ -278,7 +278,7 @@ public final class FireworksSync {
         f.turn = turn;
         float tilt = switch (p) {
             case RING -> (float) (1.2 * Hash.random(f.seed, 3));
-            case PALM -> (float) (0.55 + 0.25 * Hash.random(f.seed, 3));
+            case PALM -> (float) (ShellDesign.PALM_TILT + ShellDesign.PALM_TILT_SPREAD * Hash.random(f.seed, 3));
             default -> 0;
         };
         Effect e = effects.play(made.burst(shell), f.burstAt[0], f.burstAt[1], f.burstAt[2])

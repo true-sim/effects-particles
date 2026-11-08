@@ -17,6 +17,15 @@ public final class ShellDesign {
     static final float[] BURN_VALUES = {2.2f, 1, 0.85f, 0};
     /** The bursting charge's flash: black powder's, a hot body at 2,600 K, of luminance 1. */
     static final float[] FLASH_RGB = Spectra.color(new double[0], 2600, 1);
+    /**
+     * A palm's arms leave at this angle from the vertical and up to {@link #PALM_TILT_SPREAD} more, radians (57 to 77
+     * degrees): real palms open wide, their fronds reaching out about as far as a peony's stars of the calibre do and
+     * drooping from there.
+     */
+    public static final double PALM_TILT = 1.0;
+    public static final double PALM_TILT_SPREAD = 0.35;
+    /** A palm's comets are heavy stars, a few centimetres across: this many times a star's light. */
+    static final double COMET = 3;
     /** A crossette's children burn this long, seconds. */
     static final double SPLIT_LIFETIME = 1.3;
     /** A crossette splits at this share of its radius. */
@@ -57,7 +66,7 @@ public final class ShellDesign {
             childSpeed = 0;
         }
         double scale = settings.get(FireworksSettings.STAR_INTENSITY);
-        starCandela = shell.color().candela() * scale;
+        starCandela = shell.color().candela() * scale * (p == Pattern.PALM ? COMET : 1);
         secondCandela = shell.secondOrColor().candela() * scale;
         flashCandela = settings.get(FireworksSettings.FLASH_INTENSITY) * cal * cal;
         flashTime = settings.get(FireworksSettings.FLASH_TIME);

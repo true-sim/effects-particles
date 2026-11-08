@@ -228,6 +228,46 @@ float3 particleLight(LightListHeader* h, IndirectLight* indirect, HookSite site,
     return sum * 0.31830988; // over pi
 }
 
+/** The Henyey-Greenstein phase function of asymmetry `g` at the cosine `c` of the scattering angle, per steradian. */
+float henyeyGreenstein(float g, float c)
+{
+    float d = 1 + g * g - 2 * g * c;
+    return (1 - g * g) / (12.566371 * d * sqrt(max(d, 1e-6)));
+}
+
+/**
+ * The light a puff of a medium at `world` scatters towards the camera (`toCamera`) per unit of its scattering albedo
+ * and its opacity: every light of the view's list there after its shadow, its irradiance times the phase function of
+ * asymmetry `g` at the angle between the light's way and the camera's (forward scattering when the light is behind
+ * the puff), and the light from all around scattered evenly (a uniform radiance: its irradiance over pi). The sun
+ * without a list.
+ */
+float3 mediumLight(LightListHeader* h, IndirectLight* indirect, HookSite site, float3 world, float3 toCamera, float g,
+    uint2 pixel, float depth)
+{
+    float3 allAround = SKY_IRRADIANCE;
+    if (indirect != nullptr)
+    {
+        AroundLight hooked = aroundLight(site, world, toCamera, toCamera, toCamera,
+            around(toCamera, 1, AROUND_DIFFUSE));
+        allAround = 3.14159265 * aroundDiffuse(indirect, hooked, toCamera);
+    }
+    float3 sum = allAround * 0.31830988;
+    if (h == nullptr)
+    {
+        return sum + SUN_IRRADIANCE * henyeyGreenstein(g, dot(-SUN, toCamera));
+    }
+    LightListHeader header = loadHeader(h);
+    ClusterLightList list = ClusterLightList(header, pixel, depth);
+    for (uint i = 0; i < list.count(); i++)
+    {
+        float3 toLight;
+        float3 e = lightIrradiance(header, list.light(i), world, toCamera, pixel, depth, toLight);
+        sum += e * henyeyGreenstein(g, dot(-toLight, toCamera));
+    }
+    return sum;
+}
+
 /**
  * The pixel and view depth of `p`, relative to the camera, in `view` of `size` pixels (the record's `pixels`, which the
  * light clusters are binned over): where its light clusters and shadows are looked up. The depth is the clip w, the
@@ -270,8 +310,19 @@ void lightMain(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID)
     float depth;
     pixelOf(view, center, d.pixels, pixel, depth);
     float3 toCamera = normalize(push.facing - center);
-    float3 lit = particleLight((LightListHeader*) d.lights, (IndirectLight*) d.indirect,
-        hookSite(view, pixel, d.hookEntry), center, toCamera, 0, 0, 0, 0, 0, pixel, depth);
+    ParticleRenderer r = rendererAt(d.renderer);
+    float3 lit;
+    if ((r.flags & DRAW_MEDIUM) != 0)
+    {
+        lit = mediumLight((LightListHeader*) d.lights, (IndirectLight*) d.indirect,
+            hookSite(view, pixel, d.hookEntry), center, toCamera, r.phase, pixel, depth)
+            * exp(-0.5 * max(p.color.a, 0.0)); // to its centre through half of itself
+    }
+    else
+    {
+        lit = particleLight((LightListHeader*) d.lights, (IndirectLight*) d.indirect,
+            hookSite(view, pixel, d.hookEntry), center, toCamera, 0, 0, 0, 0, 0, pixel, depth);
+    }
     uint* commands = push.commands;
     uint at = LIT_WORDS + 4 * (e.first + k);
     commands[at] = asuint(lit.x);
@@ -704,6 +755,14 @@ float4 shade(ParticleVertex v)
         // a round sprite, or a strip soft at its edges
         float2 d = strip ? float2(0, 2 * v.uv.y - 1) : 2 * v.uv - 1;
         texel = float4(1, 1, 1, saturate(1 - dot(d, d)));
+        if ((r.flags & DRAW_MEDIUM) != 0 && !strip)
+        {
+            // A Gaussian puff, its edge three deviations out (lowered by the Gaussian's value there, so it ends at
+            // nothing and many puffs overlapping show no rings): the optical depth through it there (the alpha its
+            // centre's), and what it lets through of what is behind, as its opacity
+            float tau = max(v.color.a, 0.0) * max(exp(-4.5 * dot(d, d)) - 0.011109, 0.0) / 0.988891;
+            texel = float4(1, 1, 1, (1 - exp(-tau)) / max(v.color.a, 1e-6));
+        }
     }
     else if (strip)
     {

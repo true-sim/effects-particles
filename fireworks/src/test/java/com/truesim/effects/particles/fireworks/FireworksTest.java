@@ -308,7 +308,7 @@ class FireworksTest {
     void theSettingsAreListed() {
         com.truesim.engine.settings.SettingRegistry registry = new com.truesim.engine.settings.SettingRegistry();
         FireworksSettings.register(registry);
-        assertThat(registry.all("fireworks")).hasSize(20);
+        assertThat(registry.all("fireworks")).hasSize(26);
     }
 
     // ------------------------------------------------------------------------------------------ the sync

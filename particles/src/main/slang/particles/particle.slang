@@ -243,7 +243,7 @@ public struct ParticleRenderer
     public float scale;            // meshes: their scale per metre of the particle's size
     public uint layers;            // meshes: the layers their instances are on
     public float minPixels;        // billboards: drawn at least this many pixels across, dimmed to keep their light
-    public uint pad0;
+    public float phase;            // media: the Henyey-Greenstein asymmetry of their scattering (DRAW_MEDIUM)
     public uint pad1;
     public uint pad2;
 };
@@ -482,6 +482,9 @@ public static const uint DRAW_VOLUME = 1;                 // the soft fade by th
 public static const uint DRAW_BLEND_FRAMES = 2;           // a flipbook's frames blended
 public static const uint DRAW_LOOP = 4;                   // a flipbook played by age loops
 public static const uint DRAW_CONSERVE = 8;               // billboards stretched by speed dimmed to keep their light
+public static const uint DRAW_MEDIUM = 16;                // billboards that are puffs of a participating medium: a
+                                                          // Gaussian of optical depth (their alpha at the centre),
+                                                          // scattering by a phase function, shadowing themselves
 /** Words of a renderer record. */
 public static const uint RENDERER_WORDS = 32;
 /** A draw without a texture. */
