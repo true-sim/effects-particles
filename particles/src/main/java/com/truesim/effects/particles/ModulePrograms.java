@@ -446,7 +446,9 @@ final class ModulePrograms implements AutoCloseable {
     /**
      * A renderer's record ({@code RENDERER_WORDS} words, particle.slang's {@code ParticleRenderer}, at the offsets its
      * generated layout gives); returns its first word. Settings by name: {@code stretch} (velocity facing: extra length
-     * per m/s, in sizes), {@code soft} (metres of fade into the opaque scene), {@code volume} (1: that fade by the view
+     * per m/s, in sizes), {@code conserve} (1: a stretched billboard dimmed by its stretch, its light kept: motion
+     * blur), {@code minPixels} (billboards drawn at least this many pixels across, dimmed by the area they gained: a
+     * far spark stays a steady point of the same light instead of flickering below a pixel), {@code soft} (metres of fade into the opaque scene), {@code volume} (1: that fade by the view
      * ray's path through a sphere), {@code flipbook.columns} and {@code flipbook.rows} (frames in the texture),
      * {@code flipbook.frames} (frames played; all by default), {@code flipbook.fps} (frames per second of age,
      * looping; 0 by default: the frames over the particle's life), {@code flipbook.blend} (0: frames not blended);
@@ -467,7 +469,8 @@ final class ModulePrograms implements AutoCloseable {
         float rate = setting(r, "flipbook.fps", 0);
         int flags = (setting(r, "volume", 0) != 0 ? DRAW_VOLUME : 0)
             | (frames > 1 && setting(r, "flipbook.blend", 1) != 0 ? DRAW_BLEND_FRAMES : 0)
-            | (rate > 0 ? DRAW_LOOP : 0);
+            | (rate > 0 ? DRAW_LOOP : 0)
+            | (setting(r, "conserve", 0) != 0 ? ParticleConstants.DRAW_CONSERVE : 0);
         int at = program.size;
         for (int i = 0; i < RENDERER_WORDS; i++) {
             program.add(0);
@@ -502,6 +505,7 @@ final class ModulePrograms implements AutoCloseable {
         w[at + ParticleRendererLayout.ORIENT / 4] = (int) setting(r, "orient", ParticleConstants.ORIENT_TUMBLE);
         put(w, at, ParticleRendererLayout.SCALE, setting(r, "scale", 1));
         w[at + ParticleRendererLayout.LAYERS / 4] = (int) setting(r, "layers", 1);
+        put(w, at, ParticleRendererLayout.MIN_PIXELS, setting(r, "minPixels", 0));
         assert ParticleRendererLayout.BYTES == 4 * RENDERER_WORDS;
         return at;
     }
