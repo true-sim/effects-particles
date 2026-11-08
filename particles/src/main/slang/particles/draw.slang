@@ -328,6 +328,21 @@ ParticleVertex billboardMain(uint vertex : SV_VertexID, uint instance : SV_Insta
     float3 up;
     // Placements scale; levels of detail grow the kept to keep the coverage
     float2 half = 0.5 * p.size * e.scale * (e.drawn < 1 ? min(rsqrt(max(e.drawn, 0.05)), 2.0) : 1.0);
+    float light = 1;
+    if (r.minPixels > 0)
+    {
+        // Pixels a metre covers here: the focal length (the projection's y row) over the distance, times half the
+        // view's height; smaller sprites grow to the least size, dimmed by the area they gained (their light kept)
+        float w = max(mul(viewProjection, float4(center, 1)).w, 1e-6);
+        float perMetre = 0.5 * float(max(d.pixels.y, 1u)) * length(row(viewProjection, 1)) / w;
+        float across = 2 * half.x * perMetre;
+        if (across < r.minPixels)
+        {
+            float grow = r.minPixels / max(across, 1e-6);
+            half *= grow;
+            light /= grow * grow;
+        }
+    }
     if (r.facing == FACING_VIEW_PLANE && (push.flags & DRAW_PAIRED) == 0)
     {
         right = normalize(row(viewProjection, 0));
@@ -343,7 +358,12 @@ ParticleVertex billboardMain(uint vertex : SV_VertexID, uint instance : SV_Insta
         up = axis;
         if (r.facing == FACING_VELOCITY)
         {
-            half.y *= 1 + r.stretch * speed;
+            float stretched = 1 + r.stretch * speed;
+            half.y *= stretched;
+            if ((r.flags & DRAW_CONSERVE) != 0)
+            {
+                light /= stretched; // a streak of the same light: motion blur
+            }
         }
     }
     else // FACING_POSITION (and FREE, until particles have normals)
@@ -363,7 +383,7 @@ ParticleVertex billboardMain(uint vertex : SV_VertexID, uint instance : SV_Insta
     float2 xy = corner(vertex);
     float3 world = center + right * (xy.x * half.x) + up * (xy.y * half.y);
     o.position = mul(viewProjection, float4(world, 1));
-    o.color = float4(p.color.rgb, p.color.a * keep);
+    o.color = float4(p.color.rgb, p.color.a * keep * light);
     o.uv = float2(0.5 + 0.5 * xy.x, 0.5 - 0.5 * xy.y);
     float centerW = mul(viewProjection, float4(center, 1)).w;
     o.sphere = float3(centerW, max(half.x, half.y), o.position.w);

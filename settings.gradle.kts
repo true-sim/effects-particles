@@ -24,8 +24,14 @@ rootProject.name = "effects-particles"
 include("effects-particles")
 project(":effects-particles").projectDir = file("particles")
 
+// Fireworks over the particles: shells, burst patterns, chemistry colours, burst lights, smoke and sound events, and
+// scripted shows as a scene component.
+include("effects-particles-fireworks")
+project(":effects-particles-fireworks").projectDir = file("fireworks")
+
 // Sibling checkouts are used as included builds when present (override with -Ptruesim.<repo>=<path>, or false).
-val truesimRepos = listOf("build-logic", "common-math", "common-state", "common-jobs", "common-graph", "scene", "engine")
+val truesimRepos = listOf("build-logic", "common-math", "common-state", "common-jobs", "common-graph", "scene", "engine",
+    "effects-post", "effects-atmosphere")
 for (repo in truesimRepos) {
     providers.gradleProperty("truesim.$repo").orElse("../$repo").get()
         .takeIf { file(it).isDirectory }?.let { includeBuild(it) }

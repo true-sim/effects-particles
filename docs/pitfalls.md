@@ -35,3 +35,23 @@ older tests drew) it could not show.
   size; the half-resolution draws too, whose fragments' pixels are half the clusters'
   (`particlesLitPerPixelAtHalfResolutionTakeTheLightsNextToThem` failed before as well). Check a View field is written
   before reading it; and test a per-tile lookup with more than one tile.
+
+## Tests
+
+**A view without an environment is still lit by a constant sky.** `FireworksGpuTest`'s ground under a burst's light,
+drawn by clustered forward shading with no `EnvironmentLighting`, was measured against I cos / d² times albedo / pi as
+if the burst's light were all there was: the ratio came out 1.16 +- 0.067, rising from 1.07 under the light to 1.30 at
+the image's corners, which no falloff error explains but a constant added light does (the farther, darker points gain
+the most from it).
+- Proof: subtracting the same pixels drawn before the burst (only that constant light) gave 0.986 +- 0.004 over 64
+  points from 49 to 77 m from the light.
+- Rule: a test measuring one light's contribution subtracts a frame without it (as `ParticleLightsTest` compares against
+  the dark floor), rather than assuming an unlit view is black.
+
+**Past an emitter's survivors its range holds stale particles.** Each frame copies the survivors of a range, in order,
+into the other half of the pool; the slots after them keep what an earlier frame left there, ages and lifetimes that
+look alive. `FireworksGpuTest` read a burst's whole range after some of its stars had died and found spawn index 208
+twice.
+- Proof: reading only while every star of the burst still burns (to 1.33 s, the shortest life 1.6 s) found each index
+  once.
+- Rule: read a range back only as far as its emitter's alive count, or while none of its particles can have died.

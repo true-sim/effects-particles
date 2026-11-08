@@ -351,6 +351,61 @@ class ParticleDrawTest {
         assertThat(graph.passes()).contains("particle cull", "particle draw");
     }
 
+    /** The sum of channel {@code c} over the image's columns from {@code x0} to {@code x1}. */
+    private static long sum(int[] image, int c, int x0, int x1) {
+        long sum = 0;
+        for (int y = 0; y < SIZE; y++) {
+            for (int x = x0; x < x1; x++) {
+                sum += at(image, x, y, c);
+            }
+        }
+        return sum;
+    }
+
+    @Test
+    void farSparksGrowToTheLeastPixelsAndStreaksKeepTheirLight() {
+        // A 2 m round sprite 8 m away (8 pixels across) on the right; on the left one of 4 cm giving as much light
+        // (2,500 times the luminance): a third of a pixel, which the rasterizer mostly misses. Grown to 5 pixels it
+        // gives the same light as the large one.
+        Consumer<EmitterData.Builder> large = e -> e.init(Init.size(Bind.constant(2)),
+            Init.color(Bind.color(0, 0.25f, 0, 1)));
+        Consumer<EmitterData.Builder> tiny = e -> e.init(Init.size(Bind.constant(0.04f)),
+            Init.color(Bind.color(0, 0.25f * 2500, 0, 1)));
+        Renderer round = Renderer.billboard(Renderer.Facing.POSITION).additive();
+        effects.play(still(1, e -> large.accept(e.render(round))), 2, 0, -8);
+        Effect small = effects.play(still(1, e -> tiny.accept(e.render(round))), -2, 0.013, -8);
+        int[] image = frames(3);
+        long reference = sum(image, 1, SIZE / 2, SIZE);
+        long missed = sum(image, 1, 0, SIZE / 2);
+        assertThat(reference).as("the large sprite's light").isGreaterThan(1000);
+        assertThat(Math.abs(missed - reference)).as("a third of a pixel: not its light (" + missed + ")")
+            .isGreaterThan(reference / 5);
+        small.kill();
+        effects.play(still(1, e -> tiny.accept(e.render(round.set("minPixels", 5f)))), -2, 0.013, -8);
+        image = frames(3);
+        long grown = sum(image, 1, 0, SIZE / 2);
+        assertThat((double) grown).as("grown to 5 pixels: the large one's light").isCloseTo(reference,
+            within(0.12 * reference));
+        // Stretched by speed to twice its length: twice the light, unless conserved
+        effects.play(EffectData.builder().emitter("e", e -> e.spawn(Spawn.burst(0, 2)).init(Init.lifetime(100),
+                Init.size(Bind.constant(2)), Init.color(Bind.color(0.25f, 0, 0, 1)),
+                Init.velocity(Bind.constant(0), Bind.constant(0.001f), Bind.constant(0)))
+            .render(Renderer.billboard(Renderer.Facing.VELOCITY).additive().set("stretch", 1000f))).build(), 2, 0, -8);
+        effects.play(EffectData.builder().emitter("e", e -> e.spawn(Spawn.burst(0, 2)).init(Init.lifetime(100),
+                Init.size(Bind.constant(2)), Init.color(Bind.color(0, 0, 0.25f, 1)),
+                Init.velocity(Bind.constant(0), Bind.constant(0.001f), Bind.constant(0)))
+            .render(Renderer.billboard(Renderer.Facing.VELOCITY).additive().set("stretch", 1000f)
+                .set("conserve", 1))).build(), -2, 0, -8);
+        image = frames(3);
+        long stretched = sum(image, 0, SIZE / 2, SIZE);
+        long conserved = sum(image, 2, 0, SIZE / 2);
+        double still = reference * 2.0; // two sprites of a quarter: the reference's light twice over
+        assertThat((double) stretched).as("stretched twice as long: twice the light").isCloseTo(2 * still,
+            within(0.15 * 2 * still));
+        assertThat((double) conserved).as("conserved: the light of the sprite unstretched").isCloseTo(still,
+            within(0.15 * still));
+    }
+
     @Test
     void softParticlesFadeIntoAWallAndHideBehindIt() {
         scene.set(0, wall, blackWall(), 0, 0, -4.1, 0, 0, 0, 1, 4, 4, 4);

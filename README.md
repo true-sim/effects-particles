@@ -17,10 +17,12 @@ and uses only the core's generic hooks:
 | Module | Contents |
 |---|---|
 | `effects-particles` | `Particles` (the pool, programs and per-frame tables), `ParticleSimulation`, `ParticleDraw`, `ParticleCollisionDepth`, the particle modules' kernel (`[ParticleModule]` structs, `BuiltInModules`); `scene`: `EffectSync`, `EffectsPlugin`, `EffectBindings` |
+| `effects-particles-fireworks` | Fireworks ([below](#fireworks)): shells, burst patterns (`fireworks.pattern`, `fireworks.strobe`, `FireworkModules`), colorants from emission spectra, burst lights, smoke, sound events, scripted shows (`FireworkShow`, `.fireworks` assets, the `FireworkDisplay` component), `FireworksSync`, `FireworksPlugin` |
 
 ```kotlin
 dependencies {
     implementation("com.truesim.effects:effects-particles:0.1.0") // with engine-scene 0.187 and scene-effects 0.68
+    implementation("com.truesim.effects:effects-particles-fireworks:0.3.0") // fireworks, with engine-scene 0.194
 }
 ```
 
@@ -189,6 +191,105 @@ effects.replace(TORCH, editedTorch);                       // hot reload: instan
 - Interpolation between fixed steps (application-api D91) is not built: effects take nodes' world transforms as they
   are. 100 torches on rocks in the engine's scene benchmark allocated 0 bytes per frame (median), measured before
   the move.
+
+## Fireworks
+
+`effects-particles-fireworks` (`com.truesim.effects.particles.fireworks`) is fireworks over these particles: shells
+lifted from mortars that burst at their apex into patterns of stars coloured by their chemistry, in physical units,
+each burst lighting the scene and the smoke the shells leave, sounds for audio, and scripted shows played from the
+scene. Everything is the particles' and the scene's own: the shells' effects are scene-effects data on the GPU
+particles, the lights are scene light components, the shows are scene components and assets.
+
+```java
+app.use(new Rendering(), new Assets().mount("game", Path.of("assets")), new EffectsPlugin(), new FireworksPlugin());
+Effects effects = engine.get(EffectsPlugin.KEY).effects(scene);
+FireworksSync fireworks = engine.get(FireworksPlugin.KEY).play(effects);   // the scene's shows, each frame
+AssetRef<FireworkShow> show = paths.ref(FireworkAssets.SHOW, "game://shows/new-year.fireworks");
+cache.acquire(show);                                                      // ... once loaded:
+scene.components().set(field, FireworkDisplay.TYPE, FireworkDisplay.of(cache.get(show)));
+heard = fireworks.sounds().forEachSince(heard, (s, slot, id) -> audio.play(s.kind(slot), s.position(slot, 0),
+    s.position(slot, 1), s.position(slot, 2), s.level(slot)));           // launches, bursts, crackles
+```
+
+- **Shells** (`Shell`: a pattern, a colorant, a second colorant, a calibre in inches) are designed from their calibre
+  (`ShellDesign`): they burst some 33 m up per inch and 10 m wide per inch (`fireworks.burstHeight`,
+  `fireworks.burstRadius`), so a mortar fires them at the speed that reaches that height against the air's drag, and
+  their stars leave at the speed that carries them to the radius as the air slows them.
+- **Motion is physical and in closed form** (`Ballistics`): gravity and linear drag through moving air,
+  dv/dt = g - k (v - w), which is the particle kernel's own exact integration of `force.gravity` and `force.wind` (a
+  drag towards the world's wind, `Effects.wind`, without gusts). A shell's apex and its time are known in closed form:
+  the sync bursts it there and then, in the frame the apex comes. A burst's centre (its stars' mean: their directions
+  sum to nothing, and the motion is linear in the velocity) moves as one shell would, and its light follows it.
+- **Patterns** (`Pattern`), laid out by the pattern module `fireworks.pattern` by each star's order of birth: a sphere by
+  the golden angle (peony, chrysanthemum, willow, strobe, crackle), a ring in a tilted plane, a palm's arms on a cone, a
+  crossette's cross per group of four children; jittered a little. A peony or chrysanthemum with a second colorant has
+  a pistil (an inner sphere). Chrysanthemums leave charcoal sparks; willows burn long charcoal stars in heavy drag, their
+  glitter hanging and drooping; palms throw a few heavy comets; crossettes split a third of the way out into crosses
+  of four; strobes blink (`fireworks.strobe`, each star its own phase and rate); crackles burst as they burn out into
+  pellets that pop a moment later, each a flash of a micro-star. The module's Java mirror (`Pattern.direction`) is the
+  tests' reference.
+- **Colours from emission spectra** (`Colorant`, `Spectra`): strontium red (SrCl, SrOH bands), barium green (BaCl),
+  copper blue (CuCl), sodium yellow (the D lines), calcium orange, purple (Sr and Cu), magnalium white, titanium silver
+  and charcoal gold (hot bodies at 4,600, 3,400 and 1,900 K), integrated against the CIE 1931 matching functions
+  (Wyman et al.'s fit) into linear Rec. 709 at a luminance of 1, out-of-gamut lines mixed with white of the same
+  luminance. Each colorant has a star's luminous intensity in candela (blue the dimmest, sodium the brightest).
+- **Physical units**: a star of intensity I drawn as a round sprite of the glow's size s (`fireworks.glow`) has the
+  luminance 8 I / (pi s²) (the sprite's profile integrates to half its disc), times `fireworks.luminanceScale` (scene
+  colour per cd/m²: 1, or a renderer's pre-exposure). Brightness falls as stars burn out (a flare at ignition, burning,
+  burning out). Stars and sparks are drawn as streaks of their speed over `fireworks.shutter` (motion blur) and at
+  least `fireworks.minPixels` across, their light kept either way (the particles' new `conserve` and `minPixels`
+  renderer settings, below), so a far star is a steady point of the right brightness and the very bright cores bloom.
+- **Burst lights**: each burst lights the scene through a point light (`LightSource`, on a node the sync places, which
+  the engine's light sync puts into the clustered lights) at its stars' centre. Its intensity is the sum of its stars'
+  as they burn (and the bursting charge's flash, `fireworks.flashIntensity`), its colour theirs, and it reaches as far as
+  it gives `fireworks.lightThreshold` lux; at most `fireworks.maxLights` shine at once, the dimmest going first. Smoke
+  is lit per vertex by the lights about it, so each burst lights its own smoke and the lingering smoke of those before.
+- **Smoke**: the bursting charge's cloud and a puff every so often along every star's path (`fireworks.smoke`),
+  lingering `fireworks.smokeTime` seconds, drifting with the wind, growing, alpha blended and soft; the lift leaves a
+  trail and the mortar a puff.
+- **Sounds** (`FireworkSounds`, as effects-weather's `LightningEvents`): a ring of launches, bursts and crackle volleys
+  with their time, position, level (dB at 1 m) and shell's seed; `arrival` and `forEachArriving` delay each by the
+  distance over `fireworks.speedOfSound`.
+- **Shows** (`FireworkShow`): a seed and a timeline of cues (time, shell, the mortar's offset in the node's frame and its
+  lean), made in code (`builder`, `random`, `finale`) or loaded through the asset cache from `.fireworks` text files
+  (`FireworkAssets.SHOW`, imported by the plugin). A `FireworkDisplay` component on a node plays one from when it is
+  added. Every shell's stars, turns and tilts come from the show's seed and the cue, so a show plays the same every
+  time (tested particle for particle).
+- **Settings**: every tunable is a setting of the registry (`FireworksSettings`, `fireworks.*`): intensities, glow,
+  shutter, least pixels, burst height and radius, the shells' drag, tail rate, smoke, the lights' threshold and number,
+  the speed of sound, the luminance scale.
+
+The particles gained two renderer settings for this, any game's to use: `minPixels` (billboards drawn at least this
+many pixels across, dimmed by the area they gained) and `conserve` (velocity-stretched billboards dimmed by their
+stretch: streaks of the same light), tested in `ParticleDrawTest`.
+
+Tests (`FireworksTest` on the CPU, `FireworksGpuTest` validated on the GPU): the closed form against a fine
+integration, apexes and launch speeds; the colorants' colours; the patterns' layouts (the golden-angle sphere's spacing
+and mean, rings in their plane, palms on their cone, crosses at right angles); shows from a seed, their files and
+assets; the sync bursting a shell in the frame its apex comes, at the apex the wind carried it to, its light at its
+stars' centre as bright as they burn and gone when they are, sounds delayed by their distance, crackles as the stars
+burn out, the lights' limit. On the GPU: every star of a burst once, along the module's direction to 2e-4; shells and
+stars where the closed form puts them through gravity, drag and wind; a display's shell bursting at its apex, where its
+stars begin; the same bytes from the same seed and others from another; and a burst's light on the ground against
+I cos / d² times albedo / pi over its four lights: 0.986 +- 0.004 of it at 64 points from 49 to 77 m from the
+burst.
+
+A dense finale (`FireworksBenchmark`, `TRUESIM_BENCHMARK=true`; RX 9070 XT, 2026-11-08): 120 shells of every pattern
+fired over 8 s, the last sixth at once, over the village of the films at 1920 x 1080 with their whole look (night sky,
+clustered lights, bloom, auto exposure, the display transform); medians over the 4 s after the salvo, from the graph's
+per-pass timestamps, JaCoCo off. 126,000 particles alive and 96 burst lights (the limit: 24 bursts of 4) at the median.
+
+| | ms |
+|---|---|
+| particles: update / sort / draw / the rest (events, culling, light selection) | 0.040 / 0.048 / 0.296 / 0.125 |
+| the village shaded under 96 burst lights and 4 lamps (meshlets, clustered forward) | 1.66 |
+| bloom (physical) / auto exposure (histogram) | 0.131 / 0.025 |
+| the frame's GPU span (with the test's 0.48 ms capture of scene colour) | 3.18 |
+| CPU: the shows (`FireworksSync.update`) / the effects sync | 0.034 / 0.175 |
+
+Films (`FireworksFilms`, `TRUESIM_SCREENSHOTS=true`): a 30 s show over an Alpine village square at night (a procedural
+night sky of 6,000 stars as the test's environment) and a close look at each pattern, with bloom and auto exposure
+(effects-post, a test dependency only).
 
 ## Building
 
