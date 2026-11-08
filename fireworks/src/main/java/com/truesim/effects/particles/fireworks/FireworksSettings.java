@@ -53,15 +53,33 @@ public final class FireworksSettings {
     /** Charcoal sparks a star with a tail throws a second. */
     public static final Setting<Float> TAIL_RATE = Setting.decimal("fireworks.tailRate", 28, 0, 1000,
         "sparks a second of a star's tail");
-    /** Smoke a burning star leaves: puffs a second (0: none). */
-    public static final Setting<Float> SMOKE = Setting.decimal("fireworks.smoke", 1.2f, 0, 100,
-        "smoke puffs a second a burning star leaves");
+    /** Smoke a burning star leaves as puffs: puffs a second (0: no smoke at all). */
+    public static final Setting<Float> SMOKE = Setting.decimal("fireworks.smoke", 8, 0, 100,
+        "puffs of smoke a second a burning star leaves (0: none)");
+    /** Smoke a burning star leaves, grams a second. */
+    public static final Setting<Float> SMOKE_MASS = Setting.decimal("fireworks.smokeMass", 1, 0, 100,
+        "grams of smoke a second a burning star leaves");
+    /** Smoke a shell's bursting charge leaves, grams per square inch of calibre. */
+    public static final Setting<Float> BURST_SMOKE = Setting.decimal("fireworks.burstSmoke", 1.8f, 0, 1000,
+        "grams of smoke a shell's bursting charge leaves per square inch of calibre");
+    /** A star's smoke puff's deviation at first, metres (its sprite is three either way). */
+    public static final Setting<Float> SMOKE_PUFF = Setting.decimal("fireworks.smokePuff", 0.8f, 0.05f, 20,
+        "the deviation of a star's smoke puff at first, metres");
+    /** The smoke's mass extinction coefficient, m²/g. */
+    public static final Setting<Float> SMOKE_EXTINCTION = Setting.decimal("fireworks.smokeExtinction", 3, 0, 100,
+        "the smoke's mass extinction coefficient, square metres per gram");
+    /** The smoke's single-scattering albedo. */
+    public static final Setting<Float> SMOKE_ALBEDO = Setting.decimal("fireworks.smokeAlbedo", 0.9f, 0, 1,
+        "the smoke's single-scattering albedo");
+    /** The smoke's phase function's asymmetry (Henyey-Greenstein): 0 evenly, towards 1 forwards. */
+    public static final Setting<Float> SMOKE_PHASE = Setting.decimal("fireworks.smokePhase", 0.6f, -0.95f, 0.95f,
+        "the asymmetry of the smoke's scattering (Henyey-Greenstein g)");
+    /** How fast smoke puffs spread by turbulence, m²/s. */
+    public static final Setting<Float> SMOKE_DIFFUSIVITY = Setting.decimal("fireworks.smokeDiffusivity", 0.5f, 0, 100,
+        "the turbulent diffusivity smoke puffs spread by, square metres a second");
     /** How long smoke lingers, seconds. */
     public static final Setting<Float> SMOKE_TIME = Setting.decimal("fireworks.smokeTime", 30, 1, 600,
         "how long fireworks' smoke lingers, seconds");
-    /** How opaque a fresh puff of smoke is, 0 to 1. */
-    public static final Setting<Float> SMOKE_OPACITY = Setting.decimal("fireworks.smokeOpacity", 0.12f, 0, 1,
-        "how opaque a puff of fireworks' smoke is");
     /**
      * The illuminance a burst's light reaches down to, lux: its range is where it falls to this, so the lights' clusters
      * hold it only where it matters.
@@ -88,13 +106,13 @@ public final class FireworksSettings {
         "scene colour per cd/m², for pre-exposed scene colour");
 
     private static final Setting<?>[] ALL = {STAR_INTENSITY, SPARK_INTENSITY, CRACKLE_INTENSITY, FLASH_INTENSITY,
-        FLASH_TIME, GLOW, SHUTTER, MIN_PIXELS, BURST_RADIUS, BURST_HEIGHT, SHELL_DRAG, TAIL_RATE, SMOKE, SMOKE_TIME,
-        SMOKE_OPACITY, LIGHT_THRESHOLD, MAX_LIGHTS, LIGHTS_PER_BURST, SPEED_OF_SOUND, LUMINANCE_SCALE};
+        FLASH_TIME, GLOW, SHUTTER, MIN_PIXELS, BURST_RADIUS, BURST_HEIGHT, SHELL_DRAG, TAIL_RATE, SMOKE, SMOKE_MASS, BURST_SMOKE,
+        SMOKE_PUFF, SMOKE_EXTINCTION, SMOKE_ALBEDO, SMOKE_PHASE, SMOKE_DIFFUSIVITY, SMOKE_TIME, LIGHT_THRESHOLD, MAX_LIGHTS, LIGHTS_PER_BURST, SPEED_OF_SOUND, LUMINANCE_SCALE};
 
     /** The settings that change shells' effects: a change of one makes them anew. */
     private static final Setting<?>[] DESIGN = {STAR_INTENSITY, SPARK_INTENSITY, CRACKLE_INTENSITY, FLASH_INTENSITY,
-        FLASH_TIME, GLOW, SHUTTER, MIN_PIXELS, BURST_RADIUS, BURST_HEIGHT, SHELL_DRAG, TAIL_RATE, SMOKE, SMOKE_TIME,
-        SMOKE_OPACITY};
+        FLASH_TIME, GLOW, SHUTTER, MIN_PIXELS, BURST_RADIUS, BURST_HEIGHT, SHELL_DRAG, TAIL_RATE, SMOKE, SMOKE_MASS, BURST_SMOKE,
+        SMOKE_PUFF, SMOKE_EXTINCTION, SMOKE_ALBEDO, SMOKE_PHASE, SMOKE_DIFFUSIVITY, SMOKE_TIME};
 
     private FireworksSettings() {
     }

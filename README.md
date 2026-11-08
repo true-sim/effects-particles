@@ -220,6 +220,9 @@ heard = fireworks.sounds().forEachSince(heard, (s, slot, id) -> audio.play(s.kin
   drag towards the world's wind, `Effects.wind`, without gusts). A shell's apex and its time are known in closed form:
   the sync bursts it there and then, in the frame the apex comes. A burst's centre (its stars' mean: their directions
   sum to nothing, and the motion is linear in the velocity) moves as one shell would, and its light follows it.
+- **Palms** open wide: their arms leave 57 to 77 degrees from the vertical and fly the shell's radius, so their reach
+  out is most of a peony's of the calibre (real palms' fronds spread about as wide), drooping from there; their comets
+  are heavy stars, three times a star's light.
 - **Patterns** (`Pattern`), laid out by the pattern module `fireworks.pattern` by each star's order of birth: a sphere by
   the golden angle (peony, chrysanthemum, willow, strobe, crackle), a ring in a tilted plane, a palm's arms on a cone, a
   crossette's cross per group of four children; jittered a little. A peony or chrysanthemum with a second colorant has
@@ -244,9 +247,24 @@ heard = fireworks.sounds().forEachSince(heard, (s, slot, id) -> audio.play(s.kin
   as they burn (and the bursting charge's flash, `fireworks.flashIntensity`), its colour theirs, and it reaches as far as
   it gives `fireworks.lightThreshold` lux; at most `fireworks.maxLights` shine at once, the dimmest going first. Smoke
   is lit per vertex by the lights about it, so each burst lights its own smoke and the lingering smoke of those before.
-- **Smoke**: the bursting charge's cloud and a puff every so often along every star's path (`fireworks.smoke`),
-  lingering `fireworks.smokeTime` seconds, drifting with the wind, growing, alpha blended and soft; the lift leaves a
-  trail and the mortar a puff.
+- **Smoke as a participating medium** (`Smoke`): what black powder and stars leave is an aerosol of potassium salts
+  with some soot, submicron to a micron across: it scatters far more than it absorbs, mostly forwards. Each puff is a
+  Gaussian of mass m whose deviation grows by turbulent diffusion, σ² = σ0² + 2 K t: its mass stays, its density falls
+  as it spreads, the optical depth through its centre κ m / (2 π σ²). It scatters ω of what it removes by a
+  Henyey-Greenstein phase function of asymmetry g, and the light reaching its centre passes through half of it. Stars
+  leave `fireworks.smokeMass` grams a second in `fireworks.smoke` puffs a second along their paths, a shell's bursting
+  charge `fireworks.burstSmoke` grams per square inch of calibre about its centre, the lift a little; κ
+  (`fireworks.smokeExtinction`, 3 m²/g, as obscurant aerosols of that size measure in the visible), ω
+  (`fireworks.smokeAlbedo`, 0.9), g (`fireworks.smokePhase`, 0.6), K (`fireworks.smokeDiffusivity`, 0.5 m²/s), σ0
+  (`fireworks.smokePuff`) and its time (`fireworks.smokeTime`) are settings. The particles draw the puffs as such
+  (the renderer's new `medium` setting): a Gaussian of optical depth three deviations across, letting through e^-τ of
+  what is behind it, lit per vertex by every light about it (the bursts', with their inverse square) through the phase
+  function, at half resolution; there are no sprite edges, and a burst's own light lights its smoke from behind it
+  towards the viewer far more than from in front.
+  - Why not effects-atmosphere's fog: its fog volumes are a few homogeneous ellipsoids per view, not thousands of
+    spreading puffs along stars' paths; its froxels, the only part lit by point lights with shadows, reach 300 m (a
+    show is watched from 300 to 600 m); and it would make fireworks depend on one sky plugin. Puffs as a medium in the
+    particles keep the smoke where the particles are, at any distance, lit by the same clustered lights.
 - **Sounds** (`FireworkSounds`, as effects-weather's `LightningEvents`): a ring of launches, bursts and crackle volleys
   with their time, position, level (dB at 1 m) and shell's seed; `arrival` and `forEachArriving` delay each by the
   distance over `fireworks.speedOfSound`.
@@ -259,9 +277,12 @@ heard = fireworks.sounds().forEachSince(heard, (s, slot, id) -> audio.play(s.kin
   shutter, least pixels, burst height and radius, the shells' drag, tail rate, smoke, the lights' threshold and number,
   the speed of sound, the luminance scale.
 
-The particles gained two renderer settings for this, any game's to use: `minPixels` (billboards drawn at least this
+The particles gained renderer settings for this, any game's to use: `minPixels` (billboards drawn at least this
 many pixels across, dimmed by the area they gained) and `conserve` (velocity-stretched billboards dimmed by their
-stretch: streaks of the same light), tested in `ParticleDrawTest`.
+stretch: streaks of the same light), tested in `ParticleDrawTest`; `medium` and `phase` (billboards as Gaussian puffs
+of a participating medium: their alpha the optical depth at the centre, their colour the scattering albedo, lit per
+vertex through a Henyey-Greenstein phase function and shadowing themselves), tested with the fireworks' smoke in
+`SmokeGpuTest`.
 
 Tests (`FireworksTest` on the CPU, `FireworksGpuTest` validated on the GPU): the closed form against a fine
 integration, apexes and launch speeds; the colorants' colours; the patterns' layouts (the golden-angle sphere's spacing
@@ -275,21 +296,24 @@ I cos / d² times albedo / pi over its four lights: 0.986 +- 0.004 of it at 64 p
 burst.
 
 A dense finale (`FireworksBenchmark`, `TRUESIM_BENCHMARK=true`; RX 9070 XT, 2026-11-08): 120 shells of every pattern
-fired over 8 s, the last sixth at once, over the village of the films at 1920 x 1080 with their whole look (night sky,
-clustered lights, bloom, auto exposure, the display transform); medians over the 4 s after the salvo, from the graph's
-per-pass timestamps, JaCoCo off. 126,000 particles alive and 96 burst lights (the limit: 24 bursts of 4) at the median.
+fired over 8 s, the last sixth at once, over the village of the films at 1920 x 1080 with their whole look (the
+atmosphere's night sky, clustered lights, bloom, auto exposure, the display transform); medians over the 4 s after the
+salvo, from the graph's per-pass timestamps, JaCoCo off. 288,000 particles alive (most of them smoke puffs) and 96
+burst lights (the limit: 24 bursts of 4) at the median.
 
 | | ms |
 |---|---|
-| particles: update / sort / draw / the rest (events, culling, light selection) | 0.040 / 0.048 / 0.296 / 0.125 |
-| the village shaded under 96 burst lights and 4 lamps (meshlets, clustered forward) | 1.66 |
-| bloom (physical) / auto exposure (histogram) | 0.131 / 0.025 |
-| the frame's GPU span (with the test's 0.48 ms capture of scene colour) | 3.18 |
-| CPU: the shows (`FireworksSync.update`) / the effects sync | 0.034 / 0.175 |
+| particles: update / sort / draw (the smoke as a medium at half resolution included) / the rest | 0.127 / 0.089 / 1.47 / 0.194 |
+| the village shaded under 96 burst lights and 4 lamps (meshlets, clustered forward) | 1.41 |
+| the atmosphere's sky, its view table and stars / bloom (physical) / auto exposure (histogram) | 0.08 / 0.133 / 0.03 |
+| the frame's GPU span (with the test's 0.5 ms capture of scene colour) | 4.39 |
+| CPU: the shows (`FireworksSync.update`) / the effects sync | 0.031 / 0.180 |
 
-Films (`FireworksFilms`, `TRUESIM_SCREENSHOTS=true`): a 30 s show over an Alpine village square at night (a procedural
-night sky of 6,000 stars as the test's environment) and a close look at each pattern, with bloom and auto exposure
-(effects-post, a test dependency only).
+Films (`FireworksFilms`, `TRUESIM_SCREENSHOTS=true`): a 30 s show over an Alpine village square at night, a close look
+at each pattern and a ring's smoke close up, under effects-atmosphere's night sky (`AtmosphereSky`: the bundled star
+catalogue, the moon, airglow, the Milky Way, captured into the environment; scene colour pre-exposed at the EV100
+`AtmosphereExposure` gives the night, never below -2 so the stars' cores fit half floats), with bloom and auto
+exposure (effects-post). effects-post and atmosphere-render are test dependencies only.
 
 ## Building
 

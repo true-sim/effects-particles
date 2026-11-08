@@ -23,7 +23,7 @@ class FireworksBenchmark {
     private static final double STEP = 1 / 60.0;
 
     @Test
-    void denseFinale() {
+    void denseFinale() throws InterruptedException {
         try (Stage s = new Stage(1920, 1080, false, 256, Stage.Look.FILM)) {
             System.out.println("fireworks benchmark on " + s.device.gpu().name());
             s.graph.timings(true);
