@@ -263,9 +263,10 @@ public struct ParticleDrawRecord
     public float time;             // the effect's time, in seconds: beams' noise
     public uint lighting;          // LIGHTING_*: its renderer's, lowered by the quality
     public uint extra;             // its second texture's sampled slot: a normal map, six-way maps' second; or NO_TEXTURE
-    public uint64_t lights;        // LightListHeader*: the view's light list, for lit renderers; or 0: the sun
-    public uint64_t indirect;      // IndirectLight*: the view's indirect light (an environment); or 0: the constant
-                                   // sky. The probe volume's light comes through the view's shading hooks
+    public uint64_t lights;        // LightListHeader*: the view's light list, for lit renderers; or absent (the
+                                   // engine's absentAddress, never 0; bindless.slang's given()): the sun
+    public uint64_t indirect;      // IndirectLight*: the view's indirect light (an environment); or absent: the
+                                   // constant sky. The probe volume's light comes through the view's shading hooks
     public uint hookEntry;         // its emitter's shading hook override entry (its node's); 0: the view's values
     public uint pad;
     public uint2 pixels;           // the view's pixels across and down, as its light clusters are binned over them: where

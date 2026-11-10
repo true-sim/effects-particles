@@ -23,6 +23,7 @@ import com.truesim.effects.atmosphere.sky.SkyTime;
 import com.truesim.common.state.ChangeClock;
 import com.truesim.effects.particles.ParticleDraw;
 import com.truesim.effects.particles.ParticleSimulation;
+import com.truesim.effects.particles.fireworks.hooks.FireworksShadingHooks;
 import com.truesim.effects.particles.Particles;
 import com.truesim.effects.particles.scene.EffectSync;
 import com.truesim.effects.post.AutoExposure;
@@ -52,6 +53,7 @@ import com.truesim.engine.render.Materials;
 import com.truesim.engine.render.MeshletRenderer;
 import com.truesim.engine.render.SceneGeometry;
 import com.truesim.engine.render.SceneView;
+import com.truesim.engine.render.ShadingHooks;
 import com.truesim.engine.render.Textures;
 import com.truesim.engine.render.ViewOptions;
 import com.truesim.engine.render.materials.MetallicRoughnessParameters;
@@ -149,6 +151,9 @@ final class Stage implements AutoCloseable {
             org.assertj.core.api.Assumptions.assumeThat(false).as("no Vulkan 1.3 GPU").isTrue();
         }
         device = VulkanDevice.createHeadless(instance.bestGpu());
+        // The tests' listing (build.gradle.kts), not atmosphere-render's of the same hooks: its variants of the engine's
+        // shading were compiled against the engine that release was built on, and draw nothing on this one (pitfalls)
+        ShadingHooks.use(device, FireworksShadingHooks.HOOKS);
         graph = new FrameGraph(device, 2);
         settings = graph.settings();
         pool = new GeometryPool(device, GeometryPool.Capacity.of(1 << 18, 8192, 8), graph.frameSlots());

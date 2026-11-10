@@ -220,6 +220,45 @@ class FireworksFilms {
         }
     }
 
+    /**
+     * The show's smoke on and off, 1920 x 1080, 20 s each from the same seed (the PNG frames of {@code smoke-on} and
+     * {@code smoke-off}): a show over the village square, the camera low on the square so the bursts light the ground
+     * and the houses, the smoke of the earlier shells drifting in the wind and lit by the later bursts; off as an
+     * application without smoke ({@link FireworksSettings#SMOKE} and {@link FireworksSettings#BURST_SMOKE} 0).
+     */
+    @Test
+    void smokeOnAndOff() throws IOException, InterruptedException {
+        for (boolean smoke : new boolean[] {false, true}) {
+            Path dir = out(smoke ? "smoke-on" : "smoke-off");
+            try (Stage s = new Stage(1920, 1080, false, 256, Stage.Look.FILM)) {
+                night(s);
+                if (!smoke) {
+                    s.settings.set(FireworksSettings.SMOKE, 0f);
+                    s.settings.set(FireworksSettings.BURST_SMOKE, 0f);
+                }
+                long site = Village.build(s);
+                FireworkShow show = FireworkShow.random(2026, 20, 1.1, 220);
+                s.scene.update();
+                s.scene.components().set(site, FireworkDisplay.TYPE, FireworkDisplay.of(show));
+                String label = smoke ? "after: smoke lit by the bursts, drifting" : "before: smoke off";
+                long start = System.nanoTime();
+                s.look(4, 3, 30, 4 - Math.sin(Math.toRadians(4)) * 100, 3 + Math.tan(Math.toRadians(20)) * 100,
+                    30 - 100, 70);
+                s.frames((int) (PRE_ROLL / STEP), STEP);
+                int frames = 20 * 30;
+                for (int f = 0; f < frames; f++) {
+                    s.frame(STEP);
+                    s.frame(STEP);
+                    write(s.shot(), dir, f, label);
+                }
+                s.device.waitIdle();
+                System.out.printf(Locale.ROOT, "smoke %s: %d frames in %.1f s, %d particles alive at the end, in %s%n",
+                    smoke ? "on" : "off", frames, (System.nanoTime() - start) / 1e9, s.particles.alive(),
+                    dir.toAbsolutePath());
+            }
+        }
+    }
+
     private static double smooth(double x) {
         double c = Math.max(0, Math.min(1, x));
         return c * c * (3 - 2 * c);
