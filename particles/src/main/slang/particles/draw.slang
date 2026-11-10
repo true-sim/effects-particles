@@ -197,12 +197,12 @@ float3 particleLight(LightListHeader* h, IndirectLight* indirect, HookSite site,
     // The light from all around: the view's indirect light (the environment, or the probe volume where it reaches),
     // as the irradiance facing `normal`; or the constant sky
     float3 sum = SKY_IRRADIANCE * sky;
-    if (indirect != nullptr)
+    if (given(indirect))
     {
         AroundLight hooked = aroundLight(site, world, normal, normal, normal, around(normal, 1, AROUND_DIFFUSE));
         sum = 3.14159265 * aroundDiffuse(indirect, hooked, normal) * sky;
     }
-    if (h == nullptr)
+    if (!given(h))
     {
         float3 l = float3(dot(SUN, right), dot(SUN, up), dot(SUN, normal));
         sum += SUN_IRRADIANCE * (mode == 0 ? 1 : mode == 1 ? saturate(0.5 + 0.5 * dot(normal, SUN)) : sixWay(l, a, b));
@@ -246,14 +246,14 @@ float3 mediumLight(LightListHeader* h, IndirectLight* indirect, HookSite site, f
     uint2 pixel, float depth)
 {
     float3 allAround = SKY_IRRADIANCE;
-    if (indirect != nullptr)
+    if (given(indirect))
     {
         AroundLight hooked = aroundLight(site, world, toCamera, toCamera, toCamera,
             around(toCamera, 1, AROUND_DIFFUSE));
         allAround = 3.14159265 * aroundDiffuse(indirect, hooked, toCamera);
     }
     float3 sum = allAround * 0.31830988;
-    if (h == nullptr)
+    if (!given(h))
     {
         return sum + SUN_IRRADIANCE * henyeyGreenstein(g, dot(-SUN, toCamera));
     }

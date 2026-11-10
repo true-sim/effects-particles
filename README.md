@@ -21,8 +21,8 @@ and uses only the core's generic hooks:
 
 ```kotlin
 dependencies {
-    implementation("com.truesim.effects:effects-particles:0.1.0") // with engine-scene 0.187 and scene-effects 0.68
-    implementation("com.truesim.effects:effects-particles-fireworks:0.3.0") // fireworks, with engine-scene 0.194
+    implementation("com.truesim.effects:effects-particles:0.5.0") // with engine-scene 0.203 and scene-effects 0.70
+    implementation("com.truesim.effects:effects-particles-fireworks:0.5.0") // fireworks
 }
 ```
 

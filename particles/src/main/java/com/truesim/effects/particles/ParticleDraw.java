@@ -216,8 +216,8 @@ public final class ParticleDraw implements Technique {
         }
         culling.read(state, BufferAccess.STORAGE_READ).write(commands, BufferAccess.STORAGE_WRITE)
             .record(ctx -> {
-                int n = list.prepare(ctx.frame(), camera, lights == null ? 0 : ctx.address(lights),
-                    indirect == null ? 0 : ctx.address(indirect.table()), split);
+                int n = list.prepare(ctx.frame(), camera, ctx.addressOrAbsent(lights),
+                    indirect == null ? ctx.absent() : ctx.address(indirect.table()), split);
                 if (n > 0) {
                     ctx.dispatch(cull, list.common(cullPush, renderView.address(), camera, sortCenter, paired)
                         .commands(ctx.address(commands)).drawCount(n), (n + 63) / 64);
@@ -236,8 +236,8 @@ public final class ParticleDraw implements Technique {
             shadows.readBy(lighting, Access.SAMPLED_COMPUTE, BufferAccess.STORAGE_READ);
         }
         lighting.record(ctx -> {
-            int n = list.prepare(ctx.frame(), camera, lights == null ? 0 : ctx.address(lights),
-                    indirect == null ? 0 : ctx.address(indirect.table()), split);
+            int n = list.prepare(ctx.frame(), camera, ctx.addressOrAbsent(lights),
+                    indirect == null ? ctx.absent() : ctx.address(indirect.table()), split);
             if (n > 0 && list.vertexLit() > 0) {
                 if (shadows != null) {
                     shadows.prepare(ctx);
@@ -270,8 +270,8 @@ public final class ParticleDraw implements Technique {
             .read(commands, BufferAccess.DRAW_READ)
             .read(depth, Access.SAMPLED_FRAGMENT).attach(color, Load.LOAD, Store.STORE).region()
             .record(ctx -> {
-                int n = list.prepare(ctx.frame(), camera, lights == null ? 0 : ctx.address(lights),
-                    indirect == null ? 0 : ctx.address(indirect.table()), split);
+                int n = list.prepare(ctx.frame(), camera, ctx.addressOrAbsent(lights),
+                    indirect == null ? ctx.absent() : ctx.address(indirect.table()), split);
                 if (shadows != null && list.lit() > 0) {
                     shadows.prepare(ctx);
                 }

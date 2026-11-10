@@ -36,6 +36,23 @@ older tests drew) it could not show.
   (`particlesLitPerPixelAtHalfResolutionTakeTheLightsNextToThem` failed before as well). Check a View field is written
   before reading it; and test a per-tile lookup with more than one tile.
 
+**A release inlines the engine's push sizes: 0.4.0 crashed on engine 0.203.** `ParticleDraw`'s half-resolution depth
+runs the engine's `blocks/pyramid.spv` with the engine's generated `PyramidPush`; `PyramidPush.BYTES` is a compile-time
+constant, so the jar built against engine 0.194 kept 32 while 0.203's shader (a `copy` word added for `DepthCopy`) takes
+40, and pipeline creation failed ("pipeline takes 32 bytes of push constants: 40") on the first frame with smoke.
+- Proof: true-sim/effects-particles#7 (the showcase on engine 0.203 with 0.4.0); built against 0.203 the pass runs.
+- Rule: a release of this library works with the engine it was built on; an application raising the engine takes the
+  release built against it. Push layouts, `ViewLayout` offsets and other generated constants are inlined into the jar.
+
+**Pointers that name nothing are the engine's absent address, tested with `given(p)`.** Since engine 0.203 (#457,
+#461) the engine hands shaders `VulkanDevice.absentAddress()` (zeros, its lowest bit set) instead of 0, and its
+shading tests pointers with bindless.slang's `given(p)`; lavapipe loads through 0 even in branches nobody takes. The
+draws' records gave 0 for no light list and no indirect light and tested `== nullptr`: correct with 0, wrong with the
+absent address. They now write `ctx.addressOrAbsent` / `ctx.absent()` and test `given(p)`, as the engine's shading does.
+- Proof: reading of engine 0.203's `PassContext`, `RenderView` and `lights.slang` (`lightList` tests `given(h)`); the
+  lit-particle tests pass with the records holding the absent address.
+- Rule: never write 0 for a pointer a shader may load through; write the absent address and test with `given(p)`.
+
 ## Tests
 
 **A view without an environment is still lit by a constant sky.** `FireworksGpuTest`'s ground under a burst's light,
@@ -55,3 +72,20 @@ twice.
 - Proof: reading only while every star of the burst still burns (to 1.33 s, the shortest life 1.6 s) found each index
   once.
 - Rule: read a range back only as far as its emitter's alive count, or while none of its particles can have died.
+
+**A library's shading hook listing built against an older engine drew no instances: the fireworks' GPU tests read 0.**
+Raised to engine 0.203, `FireworksGpuTest`'s ground under a burst read luminance 0 (expected 1) and `SmokeGpuTest`'s
+puff let through -0.002 of the wall behind it (expected 0.639). Neither was the smoke or the lighting: no opaque
+instance was drawn at all, even an emissive one, with the particle draws taken out of the graph. The test classpath
+holds effects-atmosphere's `atmosphere-render` 0.4.0 (the films' night sky), whose listing `AtmosphereRenderShadingHooks`
+(probe volume, aerial perspective, fog) holds every hook found, so the engine chose it and loaded its variants of the
+engine's shading, compiled against engine 0.192. Engine 0.203 writes the absent address for a view's instance id list
+(`ViewLayout.IDS`, count 0); 0.192's culling tested it `!= 0`, took the view for one listing no instances and culled
+everything. The "negative transmittance" was the wall missing: the left puff minus the middle one, both on black.
+- Proof: a scene of one emissive box read (0, 0, 0) with `ShadingHooks.of(device)` naming `AtmosphereRenderShadingHooks`;
+  with the tests' own listing (`FireworksShadingHooks`, built here against 0.203 with the same hooks, installed by
+  `Stage`) it read 0.427, the ground under the burst 0.986 +- 0.004 of I cos / d² and the puff let through 0.667
+  (e^-tau 0.639), every fireworks test passing (true-sim/effects-particles#7).
+- Rule: tests whose classpath holds a library with a listing (a hook library's) build a listing of their own and
+  install it (`ShadingHooks.use`): two listings of the same hooks tie, and the engine then takes either. A frame that is
+  black where nothing should be is checked for which listing the device runs before the shading is suspected.
